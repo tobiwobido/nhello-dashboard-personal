@@ -874,7 +874,7 @@ function measureStrikeWidth(textEl) {
 }
 
 function syncStrikeSizes() {
-  document.querySelectorAll('.title-input.done, .note-text-input.done, .note-text.done, .task-item.done-item .due-text').forEach(function(el) {
+  document.querySelectorAll('.note-text-input.done, .note-text.done, .task-item.done-item .due-text').forEach(function(el) {
     el.style.setProperty('--strike-size', measureStrikeWidth(el));
     el.style.setProperty('--strike-start', '-2px');
   });
@@ -1298,10 +1298,7 @@ function renderColumn(data, tab) {
       resetCheckboxTextAnimation(completeCb, completeTitle);
       completeCb.style.setProperty('--cb-draw-delay', '0ms');
       completeCb.style.setProperty('--cb-draw-ms', completeAnimation.durationMs + 'ms');
-      completeTitle.style.setProperty('--strike-delay', '0ms');
-      completeTitle.style.setProperty('--strike-ms', completeAnimation.durationMs + 'ms');
-      completeTitle.style.setProperty('--strike-size', measureStrikeWidth(completeTitle));
-      completeTitle.classList.add('done', 'anim-strike');
+      completeTitle.classList.add('done');
       completeCb.classList.add('checked', 'cb-draw-only');
     }
   }

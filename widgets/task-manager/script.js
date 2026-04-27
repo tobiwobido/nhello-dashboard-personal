@@ -725,7 +725,7 @@ function measureStrikeWidth(textEl) {
 }
 
 function syncStrikeSizes() {
-  document.querySelectorAll('.title-input.done, .note-text-input.done, .note-text.done, .task-item.done-item .due-text').forEach(function(el) {
+  document.querySelectorAll('.note-text.done, .task-item.done-item .due-text').forEach(function(el) {
     el.style.setProperty('--strike-size', measureStrikeWidth(el));
     el.style.setProperty('--strike-start', '-2px');
   });
@@ -733,13 +733,14 @@ function syncStrikeSizes() {
 
 function runCheckboxTextAnimation(cb, textEl, isDone, onFinish, options) {
   options = options || {};
+  var isNoteTextInput = !!(textEl && textEl.classList && textEl.classList.contains('note-text-input'));
   var timings = getCompletionTimings(textEl ? (textEl.value || textEl.textContent || '') : '');
   resetCheckboxTextAnimation(cb, textEl);
   if (cb) {
     cb.style.setProperty('--cb-draw-delay', timings.delayMs + 'ms');
     cb.style.setProperty('--cb-draw-ms', timings.drawMs + 'ms');
   }
-  if (textEl) {
+  if (textEl && !isNoteTextInput) {
     textEl.style.setProperty('--strike-delay', timings.delayMs + 'ms');
     textEl.style.setProperty('--strike-ms', timings.drawMs + 'ms');
     textEl.style.setProperty('--strike-start', '-2px');
@@ -747,7 +748,10 @@ function runCheckboxTextAnimation(cb, textEl, isDone, onFinish, options) {
   }
   var usePop = options.pop !== false;
   if (isDone) {
-    if (textEl) textEl.classList.add('done', 'anim-strike');
+    if (textEl) {
+      textEl.classList.add('done');
+      textEl.classList.add('anim-strike');
+    }
     if (cb) cb.classList.add('checked', usePop ? 'cb-anim' : 'cb-draw-only');
   } else {
     if (textEl) textEl.classList.add('anim-unstrike');
@@ -1149,10 +1153,7 @@ function renderColumn(data, tab) {
       resetCheckboxTextAnimation(completeCb, completeTitle);
       completeCb.style.setProperty('--cb-draw-delay', '0ms');
       completeCb.style.setProperty('--cb-draw-ms', completeAnimation.durationMs + 'ms');
-      completeTitle.style.setProperty('--strike-delay', '0ms');
-      completeTitle.style.setProperty('--strike-ms', completeAnimation.durationMs + 'ms');
-      completeTitle.style.setProperty('--strike-size', measureStrikeWidth(completeTitle));
-      completeTitle.classList.add('done', 'anim-strike');
+      completeTitle.classList.add('done');
       completeCb.classList.add('checked', 'cb-draw-only');
     }
   }

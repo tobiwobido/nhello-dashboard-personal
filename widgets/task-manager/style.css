@@ -1255,10 +1255,6 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   min-width: 0;
   border: none;
   background: transparent;
-  background-image: linear-gradient(currentColor, currentColor);
-  background-repeat: no-repeat;
-  background-position: var(--strike-start, -2px) 52%;
-  background-size: 0 1px;
   color: var(--text-primary);
   font-size: 14px;
   font-family: inherit;
@@ -1270,12 +1266,10 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   display: block;
   box-sizing: border-box;
   width: 100%;
-  background-origin: content-box;
 }
 .title-input.done {
   color: var(--text-hint);
-  text-decoration: none;
-  background-size: var(--strike-size, 0) 1px;
+  text-decoration: line-through;
 }
 .title-input.anim-strike {
   animation: strike-grow var(--strike-ms, 160ms) linear var(--strike-delay, 60ms) both;
@@ -1444,14 +1438,14 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 .note-text-input.done {
   color: var(--text-hint);
   opacity: 1;
-  text-decoration: none;
-  background-size: var(--strike-size, 0) 1px;
+  text-decoration: line-through;
+  text-decoration-color: currentColor;
 }
 .note-text-input.anim-strike {
-  animation: strike-grow var(--strike-ms, 160ms) linear var(--strike-delay, 60ms) both;
+  animation: note-strike-in var(--strike-ms, 160ms) linear var(--strike-delay, 60ms) both;
 }
 .note-text-input.anim-unstrike {
-  animation: strike-shrink var(--strike-ms, 160ms) linear both;
+  animation: note-strike-out var(--strike-ms, 160ms) linear both;
 }
 .note-text-input:focus { border-bottom: 1px solid var(--border-input); margin-bottom: -1px; }
 .note-del {
@@ -1545,6 +1539,14 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 @keyframes strike-shrink {
   from { background-size: var(--strike-size, 100%) 1px; }
   to   { background-size: 0 1px; }
+}
+@keyframes note-strike-in {
+  from { text-decoration-color: transparent; }
+  to   { text-decoration-color: currentColor; }
+}
+@keyframes note-strike-out {
+  from { text-decoration-color: currentColor; }
+  to   { text-decoration-color: transparent; }
 }
 .note-pills .note-add-row {
   position: relative;

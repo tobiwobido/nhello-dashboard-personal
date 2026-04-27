@@ -1255,10 +1255,6 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   min-width: 0;
   border: none;
   background: transparent;
-  background-image: linear-gradient(currentColor, currentColor);
-  background-repeat: no-repeat;
-  background-position: var(--strike-start, -2px) 52%;
-  background-size: 0 1px;
   color: var(--text-primary);
   font-size: 14px;
   font-family: inherit;
@@ -1270,12 +1266,10 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   display: block;
   box-sizing: border-box;
   width: 100%;
-  background-origin: content-box;
 }
 .title-input.done {
   color: var(--text-hint);
-  text-decoration: none;
-  background-size: var(--strike-size, 0) 1px;
+  text-decoration: line-through;
 }
 .title-input.anim-strike {
   animation: strike-grow var(--strike-ms, 160ms) linear var(--strike-delay, 60ms) both;
