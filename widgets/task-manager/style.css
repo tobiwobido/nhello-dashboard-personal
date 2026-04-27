@@ -1,8 +1,12 @@
 /* ── Task Manager widget styles ──────────────────────────────────────────── */
 
 #panel-task-manager {
+  --tasks-available-h: calc(100dvh - 22rem);
   padding: 2rem 1.5rem;
   overflow-x: hidden;
+}
+.main-content:has(#panel-task-manager.active) {
+  overflow-y: hidden;
 }
 
 .app-wrap {
@@ -827,6 +831,7 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   overflow: visible;
   min-width: 0;
   height: 100%;
+  max-height: var(--tasks-available-h);
   transition: border-color 0.2s;
 }
 .col.is-resizing {
@@ -1029,10 +1034,13 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 .col-tasks {
   padding: 8px;
   padding-right: 8px;
+  padding-bottom: 14px;
   overflow-y: auto;
   overflow-x: hidden;
   flex: 1;
-  max-height: 68vh;
+  min-height: 0;
+  max-height: none;
+  scroll-padding-bottom: 14px;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -1056,7 +1064,7 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 }
 
 @media (max-width: 860px) {
-  .col { height: auto; }
+  .col { height: auto; max-height: none; }
   .col-tasks { max-height: none; }
 }
 

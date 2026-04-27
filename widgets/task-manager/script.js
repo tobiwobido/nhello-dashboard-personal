@@ -15,6 +15,8 @@ var _clearAllDoneTimer = null;
 var _clearDoneTimers = {};
 var _filterTransitionTimer = null;
 var _filterEnterTimer = null;
+var _filterNoMotionCols = null;
+var _freezeTaskAvailableHeightSync = false;
 
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
 
@@ -872,8 +874,25 @@ function getTransitionResizeDuration() {
   return Math.max(360, maxFlipMs);
 }
 
+function syncTaskCardAvailableHeight() {
+  var panel = document.getElementById('panel-task-manager');
+  if (!panel) return;
+  var grid = panel.querySelector('.columns-grid');
+  if (!grid) return;
+  var mainContent = document.querySelector('.main-content');
+  var columnsTop = grid.getBoundingClientRect().top;
+  var mainTop = mainContent ? mainContent.getBoundingClientRect().top : 0;
+  var relativeTop = columnsTop - mainTop;
+  var panelBottomPadding = Math.max(0, parseFloat(window.getComputedStyle(panel).paddingBottom) || 0);
+  var bottomPadding = 16;
+  var containerHeight = mainContent ? mainContent.clientHeight : window.innerHeight;
+  var available = Math.max(0, Math.floor(containerHeight - relativeTop - panelBottomPadding - bottomPadding));
+  panel.style.setProperty('--tasks-available-h', available + 'px');
+}
+
 function setFilter(f) {
   if (activeFilter === f && !_filterTransitionTimer) return;
+  _filterNoMotionCols = null;
   document.querySelectorAll('.filter-tab').forEach(function(btn) {
     btn.classList.toggle('active', btn.dataset.filter === f);
   });
@@ -898,7 +917,25 @@ function setFilter(f) {
     (prevFilter === 'all' && f === 'done') ||
     (prevFilter === 'done' && f === 'all')
   );
+  var isAllActiveSwitch = (
+    (prevFilter === 'all' && f === 'active') ||
+    (prevFilter === 'active' && f === 'all')
+  );
+  var hasAnyScrollableCol = ['life','work','pd'].some(function(tab) {
+    var container = document.getElementById('tasks-' + tab);
+    if (!container) return false;
+    return container.scrollHeight > ((container.clientHeight || 0) + 0.5);
+  });
+  if (isAllActiveSwitch && hasAnyScrollableCol) {
+    _filterNoMotionCols = { life: true, work: true, pd: true };
+    pendingFilterEnterIds = null;
+    _freezeTaskAvailableHeightSync = true;
+    activeFilter = f;
+    render();
+    return;
+  }
   pendingFilterEnterIds = { life: {}, work: {}, pd: {} };
+  var noMotionCols = { life: false, work: false, pd: false };
   ['life','work','pd'].forEach(function(tab) {
     var container = document.getElementById('tasks-' + tab);
     if (!container) return;
@@ -915,10 +952,33 @@ function setFilter(f) {
         pendingFilterEnterIds[tab][task.id] = true;
       }
     });
+    var exitingThisTab = [];
     container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
-      if (!nextIds[el.dataset.id]) exiting.push(el);
+      if (!nextIds[el.dataset.id]) exitingThisTab.push(el);
     });
+    var suppressMotion = false;
+    if (prevFilter === 'all' && f === 'active' && exitingThisTab.length) {
+      var listViewport = container.clientHeight || 0;
+      var currentScrollable = container.scrollHeight > (listViewport + 0.5);
+      if (currentScrollable && listViewport > 0) {
+        var nextContentHeight = 0;
+        container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
+          if (!nextIds[el.dataset.id]) return;
+          var style = window.getComputedStyle(el);
+          nextContentHeight += el.offsetHeight + (parseFloat(style.marginBottom) || 0);
+        });
+        var remainsScrollable = nextContentHeight > (listViewport + 0.5);
+        suppressMotion = remainsScrollable;
+      }
+    }
+    if (suppressMotion) {
+      noMotionCols[tab] = true;
+      pendingFilterEnterIds[tab] = {};
+      return;
+    }
+    exitingThisTab.forEach(function(el) { exiting.push(el); });
   });
+  _filterNoMotionCols = noMotionCols;
   if (forceEnterDone && prevFilter === 'all' && exiting.length === 0) {
     pendingFilterEnterIds = { life: {}, work: {}, pd: {} };
   }
@@ -944,6 +1004,7 @@ function setFilter(f) {
 // ── Render ────────────────────────────────────────────────────────────────────
 
 function render() {
+  if (!_freezeTaskAvailableHeightSync) syncTaskCardAvailableHeight();
   var data = getData();
   renderDashboard(data);
   ['life','work','pd'].forEach(function(tab){ renderColumn(data, tab); });
@@ -976,6 +1037,8 @@ function render() {
   }
   document.querySelectorAll('.title-input, .note-text-input').forEach(autoResize);
   syncStrikeSizes();
+  _filterNoMotionCols = null;
+  _freezeTaskAvailableHeightSync = false;
 }
 
 // Syncs version-state-dependent UI without rebuilding task column DOM.
@@ -1009,6 +1072,7 @@ function renderColumn(data, tab) {
 
   var container = document.getElementById('tasks-'+tab);
   if (!container) return;
+  var suppressFilterMotion = !!(_filterNoMotionCols && _filterNoMotionCols[tab]);
   var addInput = document.getElementById('input-'+tab);
   var addRow = addInput ? addInput.closest('.col-add') : null;
   var displayTasks = getDisplayTasksForFilter(tasks, activeFilter);
@@ -1105,6 +1169,13 @@ function renderColumn(data, tab) {
       + notePillsHTML
       + '</div>';
   }).join('');
+
+  if (suppressFilterMotion) {
+    container._lastFlipMs = 0;
+    if (pendingTaskInsert && pendingTaskInsert.tab === tab) pendingTaskInsert = null;
+    if (pendingTaskComplete && pendingTaskComplete.tab === tab) pendingTaskComplete = null;
+    return;
+  }
 
   // FLIP reorder — calculate deltas from pre-render snapshot
   var newItems = container.querySelectorAll('.task-group[data-id]');
@@ -1294,6 +1365,9 @@ function triggerTaskDashboardEntrance() {
 }
 
 window.triggerTaskDashboardEntrance = triggerTaskDashboardEntrance;
+window.addEventListener('resize', syncTaskCardAvailableHeight);
+var _taskMainContentEl = document.querySelector('.main-content');
+if (_taskMainContentEl) _taskMainContentEl.addEventListener('scroll', syncTaskCardAvailableHeight, { passive: true });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 

@@ -148,3 +148,21 @@ all inputs:
 
 always include full behavior + full UX
 no partial work
+
+---
+
+# MINIMAL FIX
+
+add shortcut rule
+
+when I say "apply minimal fix":
+
+* use the most recent Minimal Fix Steps
+* apply them to live code only
+* only implement what is explicitly listed
+* do not modify unrelated code
+* do not refactor or redesign
+* do not touch demo files
+* show exact file paths changed
+* keep changes minimal
+* always treat "apply minimal fix" as a strict command, not a suggestion
