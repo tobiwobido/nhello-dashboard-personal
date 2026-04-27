@@ -708,10 +708,16 @@ function addNoteItem(tab, taskId, text, skipFocus) {
   saveData(data);
   render();
   if (!skipFocus) {
-    setTimeout(function() {
+    requestAnimationFrame(function() {
       var inp = document.getElementById('note-add-'+taskId);
-      if (inp) inp.focus();
-    }, 20);
+      if (!inp) return;
+      inp.value = '';
+      inp.focus();
+      if (typeof inp.setSelectionRange === 'function') {
+        var end = inp.value.length;
+        inp.setSelectionRange(end, end);
+      }
+    });
   }
 }
 
@@ -719,7 +725,10 @@ function handleNoteAddKeydown(e, tab, taskId) {
   if (e.key === 'Enter') {
     e.preventDefault();
     var inp = document.getElementById('note-add-' + taskId);
-    if (inp) addNoteItem(tab, taskId, inp.value);
+    if (inp) {
+      inp._enterSubmitted = true;
+      addNoteItem(tab, taskId, inp.value);
+    }
   } else if (e.key === 'Escape') {
     openNotes[taskId] = false;
     render();
@@ -728,6 +737,10 @@ function handleNoteAddKeydown(e, tab, taskId) {
 
 function handleNoteAddBlur(tab, taskId, input) {
   if (!document.body.contains(input)) return;
+  if (input._enterSubmitted) {
+    input._enterSubmitted = false;
+    return;
+  }
   var text = (input.value || '').trim();
   if (text) {
     addNoteItem(tab, taskId, text, true);
