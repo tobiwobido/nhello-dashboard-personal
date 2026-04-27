@@ -154,6 +154,11 @@ h1 { font-size: 36px; font-weight: 600; margin-bottom: 4px; }
   gap: 0;
 }
 
+/* Personal build: hide preview/production controls while retaining version logic in code. */
+.sidebar-version-panel {
+  display: none;
+}
+
 .sidebar-preview-labels {
   display: flex;
   align-items: center;

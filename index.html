@@ -636,7 +636,7 @@
   }
 
   function setDashboardVersion(versionName) {
-    var nextVersion = versionName === 'preview' ? 'preview' : 'production';
+    var nextVersion = 'production';
     if (!dashboardVersions) dashboardVersions = loadDashboardVersions();
     var activePanel = document.querySelector('.panel.active');
     var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -738,8 +738,16 @@
   (function initDashboardVersionSystem() {
     dashboardVersions = loadDashboardVersions();
     loadProductionRestoreState();
-    activeDashboardVersion = dashboardVersions.active === 'preview' ? 'preview' : 'production';
-    applyDashboardVersionConfig(dashboardVersions[activeDashboardVersion]);
+    if (dashboardVersions && dashboardVersions.preview) {
+      restorableProductionConfig = cloneVersionConfig(dashboardVersions.production);
+      productionRestoreAvailable = true;
+      saveProductionRestoreState();
+      dashboardVersions.production = cloneVersionConfig(dashboardVersions.preview);
+    }
+    activeDashboardVersion = 'production';
+    dashboardVersions.active = 'production';
+    saveDashboardVersions();
+    applyDashboardVersionConfig(dashboardVersions.production);
   })();
 
   if (!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
