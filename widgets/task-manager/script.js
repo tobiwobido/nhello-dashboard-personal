@@ -19,6 +19,7 @@ var _filterEnterTimer = null;
 var _filterNoMotionCols = null;
 var _freezeTaskAvailableHeightSync = false;
 var _columnScopedToggleTab = null;
+var _noteToggleRenderTab = null;
 var _pendingFlipReleases = null;
 
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
@@ -50,6 +51,8 @@ var undoStack = [];
 var redoStack = [];
 var _undoing  = false;
 var _undoRedoScopedTabs = null;
+var _pendingUndoTaskToggleAnimation = null;
+var _pendingUndoNoteToggleAnimation = null;
 
 function _getChangedTabsFromSnapshots(currentSnap, targetSnap) {
   function parseSnap(snap) {
@@ -66,6 +69,92 @@ function _getChangedTabsFromSnapshots(currentSnap, targetSnap) {
   });
 }
 
+function _collectUndoRedoAnimationState(currentSnap, targetSnap) {
+  function parseSnap(snap) {
+    try {
+      return JSON.parse(snap || 'null') || { life:[], work:[], pd:[] };
+    } catch (e) {
+      return { life:[], work:[], pd:[] };
+    }
+  }
+  function byId(items) {
+    var map = {};
+    (items || []).forEach(function(item) {
+      if (item && item.id) map[item.id] = item;
+    });
+    return map;
+  }
+  var current = parseSnap(currentSnap);
+  var target = parseSnap(targetSnap);
+  var result = {
+    changedTabs: ['life','work','pd'].filter(function(tab) {
+      return JSON.stringify(current[tab] || []) !== JSON.stringify(target[tab] || []);
+    }),
+    taskToggle: null,
+    noteToggle: null
+  };
+  ['life','work','pd'].forEach(function(tab) {
+    var currentTasks = byId(current[tab]);
+    var targetTasks = byId(target[tab]);
+    var taskIds = Object.keys(currentTasks).concat(Object.keys(targetTasks).filter(function(id) {
+      return !currentTasks[id];
+    }));
+    taskIds.forEach(function(taskId) {
+      var currentTask = currentTasks[taskId];
+      var targetTask = targetTasks[taskId];
+      if (!currentTask || !targetTask) return;
+      if (!result.taskToggle && !!currentTask.done !== !!targetTask.done) {
+        result.taskToggle = { tab: tab, id: taskId, done: !!targetTask.done };
+      }
+      if (result.noteToggle) return;
+      var currentNotes = byId(currentTask.noteItems);
+      var targetNotes = byId(targetTask.noteItems);
+      var noteIds = Object.keys(currentNotes).concat(Object.keys(targetNotes).filter(function(id) {
+        return !currentNotes[id];
+      }));
+      noteIds.forEach(function(noteId) {
+        if (result.noteToggle) return;
+        var currentNote = currentNotes[noteId];
+        var targetNote = targetNotes[noteId];
+        if (!currentNote || !targetNote) return;
+        if (!!currentNote.done !== !!targetNote.done) {
+          result.noteToggle = {
+            tab: tab,
+            taskId: taskId,
+            noteId: noteId,
+            done: !!targetNote.done
+          };
+        }
+      });
+    });
+  });
+  return result;
+}
+
+function runUndoRedoStateAnimations() {
+  if (_pendingUndoTaskToggleAnimation) {
+    var taskAnim = _pendingUndoTaskToggleAnimation;
+    if (!taskAnim.done) {
+      var taskEl = document.querySelector('.task-group[data-id="'+taskAnim.id+'"]');
+      var taskCb = taskEl && taskEl.querySelector('.task-item .cb-wrap');
+      var taskTitle = taskEl && taskEl.querySelector('.title-input');
+      if (taskCb && taskTitle) {
+        runCheckboxTextAnimation(taskCb, taskTitle, false, null, { pop: false });
+      }
+    }
+    _pendingUndoTaskToggleAnimation = null;
+  }
+  if (_pendingUndoNoteToggleAnimation) {
+    var noteAnim = _pendingUndoNoteToggleAnimation;
+    var noteCb = document.querySelector('.cb-wrap[data-note-id="'+noteAnim.noteId+'"]');
+    var noteInput = noteCb && noteCb.parentElement && noteCb.parentElement.querySelector('.note-text-input');
+    if (noteCb && noteInput) {
+      runCheckboxTextAnimation(noteCb, noteInput, noteAnim.done, null, { pop: false });
+    }
+    _pendingUndoNoteToggleAnimation = null;
+  }
+}
+
 function pushUndo() {
   if (_undoing) return;
   var snap = localStorage.getItem(TM_KEY) || JSON.stringify({ life:[], work:[], pd:[] });
@@ -79,7 +168,8 @@ function doUndo() {
   if (!undoStack.length) return false;
   var current = localStorage.getItem(TM_KEY) || JSON.stringify({ life:[], work:[], pd:[] });
   var target = undoStack[undoStack.length - 1];
-  var changedTabs = _getChangedTabsFromSnapshots(current, target);
+  var animationState = _collectUndoRedoAnimationState(current, target);
+  var changedTabs = animationState.changedTabs;
   _undoing = true;
   redoStack.push(current);
   if (redoStack.length > 50) redoStack.shift();
@@ -87,7 +177,20 @@ function doUndo() {
   _undoing = false;
   _undoRedoScopedTabs = changedTabs.length ? changedTabs : null;
   _columnScopedToggleTab = changedTabs.length === 1 ? changedTabs[0] : null;
+  _pendingUndoTaskToggleAnimation = animationState.taskToggle;
+  _pendingUndoNoteToggleAnimation = animationState.noteToggle;
+  if (animationState.taskToggle && animationState.taskToggle.done) {
+    pendingTaskComplete = { tab: animationState.taskToggle.tab, id: animationState.taskToggle.id };
+  }
+  if (animationState.noteToggle) {
+    pendingNoteToggle = {
+      tab: animationState.noteToggle.tab,
+      taskId: animationState.noteToggle.taskId,
+      noteId: animationState.noteToggle.noteId
+    };
+  }
   render();
+  runUndoRedoStateAnimations();
   return true;
 }
 
@@ -95,7 +198,8 @@ function doRedo() {
   if (!redoStack.length) return false;
   var current = localStorage.getItem(TM_KEY) || JSON.stringify({ life:[], work:[], pd:[] });
   var target = redoStack[redoStack.length - 1];
-  var changedTabs = _getChangedTabsFromSnapshots(current, target);
+  var animationState = _collectUndoRedoAnimationState(current, target);
+  var changedTabs = animationState.changedTabs;
   _undoing = true;
   undoStack.push(current);
   if (undoStack.length > 50) undoStack.shift();
@@ -103,7 +207,20 @@ function doRedo() {
   _undoing = false;
   _undoRedoScopedTabs = changedTabs.length ? changedTabs : null;
   _columnScopedToggleTab = changedTabs.length === 1 ? changedTabs[0] : null;
+  _pendingUndoTaskToggleAnimation = animationState.taskToggle;
+  _pendingUndoNoteToggleAnimation = animationState.noteToggle;
+  if (animationState.taskToggle && animationState.taskToggle.done) {
+    pendingTaskComplete = { tab: animationState.taskToggle.tab, id: animationState.taskToggle.id };
+  }
+  if (animationState.noteToggle) {
+    pendingNoteToggle = {
+      tab: animationState.noteToggle.tab,
+      taskId: animationState.noteToggle.taskId,
+      noteId: animationState.noteToggle.noteId
+    };
+  }
   render();
+  runUndoRedoStateAnimations();
   return true;
 }
 
@@ -703,6 +820,7 @@ function toggleNoteItem(tab, taskId, noteId) {
   if (!t) return;
   var note = (t.noteItems||[]).find(function(n){ return n.id===noteId; });
   if (!note) return;
+  _noteToggleRenderTab = tab;
   note.done = !note.done;
   var allNotesDone = (t.noteItems||[]).length > 0 && (t.noteItems||[]).every(function(n){ return n.done; });
   var shouldAutoCompleteTask = note.done && allNotesDone && !t.done;
@@ -740,6 +858,7 @@ function saveNoteText(tab, taskId, noteId, val) {
     t.noteItems = sortedNotes(t.noteItems || []);
     saveData(data);
   }
+  _columnScopedToggleTab = tab;
   render();
 }
 
@@ -1114,6 +1233,10 @@ function setFilter(f) {
 
 function render() {
   _pendingFlipReleases = [];
+  var allTabs = ['life','work','pd'];
+  var renderTabs = _noteToggleRenderTab
+    ? [_noteToggleRenderTab]
+    : (_undoRedoScopedTabs && _undoRedoScopedTabs.length ? _undoRedoScopedTabs.slice() : allTabs);
   var scopedTabsForPostRender = null;
   if (_columnScopedToggleTab) {
     scopedTabsForPostRender = [_columnScopedToggleTab];
@@ -1121,15 +1244,22 @@ function render() {
     scopedTabsForPostRender = _undoRedoScopedTabs.slice();
   }
   var scrollTops = {};
-  ['life','work','pd'].forEach(function(tab) {
+  renderTabs.forEach(function(tab) {
     var containerBefore = document.getElementById('tasks-' + tab);
     if (containerBefore) scrollTops[tab] = containerBefore.scrollTop;
   });
-  if (!_freezeTaskAvailableHeightSync) syncTaskCardAvailableHeight();
+  if (!_freezeTaskAvailableHeightSync && !_noteToggleRenderTab && !_undoRedoScopedTabs) syncTaskCardAvailableHeight();
   var data = getData();
   renderDashboard(data);
-  ['life','work','pd'].forEach(function(tab){ renderColumn(data, tab); });
-  ['life','work','pd'].forEach(function(tab) {
+  renderTabs.forEach(function(tab){ renderColumn(data, tab); });
+  if (_noteToggleRenderTab) {
+    renderTabs.forEach(function(tab) {
+      var container = document.getElementById('tasks-' + tab);
+      if (!container) return;
+      container.querySelectorAll('.title-input, .note-text-input').forEach(autoResizeIfNeeded);
+    });
+  }
+  renderTabs.forEach(function(tab) {
     var containerAfter = document.getElementById('tasks-' + tab);
     if (!containerAfter || scrollTops[tab] === undefined) return;
     if (containerAfter.scrollTop !== scrollTops[tab]) {
@@ -1189,6 +1319,7 @@ function render() {
   _freezeTaskAvailableHeightSync = false;
   _undoRedoScopedTabs = null;
   _columnScopedToggleTab = null;
+  _noteToggleRenderTab = null;
 }
 
 // Syncs version-state-dependent UI without rebuilding task column DOM.
@@ -1341,7 +1472,9 @@ function renderColumn(data, tab) {
   var animated = {};
   var maxFlipMs = 0;
   var completeAnimation = null;
+  var suppressTaskFlipForNoteToggle = !!noteToggleForTab;
   if (
+    suppressTaskFlipForNoteToggle ||
     (_columnScopedToggleTab && _columnScopedToggleTab !== tab) ||
     (_undoRedoScopedTabs && _undoRedoScopedTabs.indexOf(tab) === -1)
   ) {
