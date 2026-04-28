@@ -7,6 +7,7 @@ var activeFilter = 'all';
 var pendingTaskInsert = null;
 var pendingTaskComplete = null;
 var pendingTaskNoteCompletes = null;
+var pendingNoteToggle = null;
 var pendingFilterEnterIds = null;
 var _dashboardEntranceTimer = null;
 var _categoryHeaderEntranceTimer = null;
@@ -17,6 +18,8 @@ var _filterTransitionTimer = null;
 var _filterEnterTimer = null;
 var _filterNoMotionCols = null;
 var _freezeTaskAvailableHeightSync = false;
+var _columnScopedToggleTab = null;
+var _pendingFlipReleases = null;
 
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
 
@@ -46,6 +49,22 @@ function getData() {
 var undoStack = [];
 var redoStack = [];
 var _undoing  = false;
+var _undoRedoScopedTabs = null;
+
+function _getChangedTabsFromSnapshots(currentSnap, targetSnap) {
+  function parseSnap(snap) {
+    try {
+      return JSON.parse(snap || 'null') || { life:[], work:[], pd:[] };
+    } catch (e) {
+      return { life:[], work:[], pd:[] };
+    }
+  }
+  var current = parseSnap(currentSnap);
+  var target = parseSnap(targetSnap);
+  return ['life','work','pd'].filter(function(tab) {
+    return JSON.stringify(current[tab] || []) !== JSON.stringify(target[tab] || []);
+  });
+}
 
 function pushUndo() {
   if (_undoing) return;
@@ -59,11 +78,15 @@ function pushUndo() {
 function doUndo() {
   if (!undoStack.length) return false;
   var current = localStorage.getItem(TM_KEY) || JSON.stringify({ life:[], work:[], pd:[] });
+  var target = undoStack[undoStack.length - 1];
+  var changedTabs = _getChangedTabsFromSnapshots(current, target);
   _undoing = true;
   redoStack.push(current);
   if (redoStack.length > 50) redoStack.shift();
   localStorage.setItem(TM_KEY, undoStack.pop());
   _undoing = false;
+  _undoRedoScopedTabs = changedTabs.length ? changedTabs : null;
+  _columnScopedToggleTab = changedTabs.length === 1 ? changedTabs[0] : null;
   render();
   return true;
 }
@@ -71,11 +94,15 @@ function doUndo() {
 function doRedo() {
   if (!redoStack.length) return false;
   var current = localStorage.getItem(TM_KEY) || JSON.stringify({ life:[], work:[], pd:[] });
+  var target = redoStack[redoStack.length - 1];
+  var changedTabs = _getChangedTabsFromSnapshots(current, target);
   _undoing = true;
   undoStack.push(current);
   if (undoStack.length > 50) undoStack.shift();
   localStorage.setItem(TM_KEY, redoStack.pop());
   _undoing = false;
+  _undoRedoScopedTabs = changedTabs.length ? changedTabs : null;
+  _columnScopedToggleTab = changedTabs.length === 1 ? changedTabs[0] : null;
   render();
   return true;
 }
@@ -119,8 +146,62 @@ function sortedTasks(tasks) {
     if (da !== db) return da < db ? -1 : 1;
     var pa = pri[a.priority||'medium'], pb = pri[b.priority||'medium'];
     if (pa !== pb) return pa - pb;
-    return (a.text||'').localeCompare(b.text||'');
+    var at = String(a && a.text ? a.text : '').trim();
+    var bt = String(b && b.text ? b.text : '').trim();
+    return at.localeCompare(bt, undefined, { numeric: true, sensitivity: 'base' });
   });
+}
+
+function sortedNotes(noteItems) {
+  function noteTextCompare(a, b) {
+    var at = String(a && a.text ? a.text : '').trim();
+    var bt = String(b && b.text ? b.text : '').trim();
+    return at.localeCompare(bt, undefined, { numeric: true, sensitivity: 'base' });
+  }
+  var open = [];
+  var done = [];
+  (noteItems || []).forEach(function(note) {
+    (note && note.done ? done : open).push(note);
+  });
+  open.sort(noteTextCompare);
+  done.sort(noteTextCompare);
+  return open.concat(done);
+}
+
+function applyInitialOrderingOnce() {
+  var initKey = TM_KEY + '_order_init_v1';
+  if (localStorage.getItem(initKey) === '1') return;
+  var data = getData();
+  var changed = false;
+
+  function itemKey(item) {
+    return item && item.id
+      ? String(item.id)
+      : ('t:' + String(item && item.text ? item.text : '').trim().toLocaleLowerCase());
+  }
+
+  ['life','work','pd'].forEach(function(tab) {
+    var tasks = Array.isArray(data[tab]) ? data[tab] : [];
+
+    tasks.forEach(function(task) {
+      if (!Array.isArray(task.noteItems)) task.noteItems = [];
+      var beforeNotes = task.noteItems.map(itemKey).join('|');
+      task.noteItems = sortedNotes(task.noteItems);
+      var afterNotes = task.noteItems.map(itemKey).join('|');
+      if (beforeNotes !== afterNotes) changed = true;
+    });
+
+    var beforeTasks = tasks.map(itemKey).join('|');
+    tasks = sortedTasks(tasks);
+    var afterTasks = tasks.map(itemKey).join('|');
+    if (beforeTasks !== afterTasks) changed = true;
+    data[tab] = tasks;
+  });
+
+  if (changed) {
+    localStorage.setItem(TM_KEY, JSON.stringify(data));
+  }
+  localStorage.setItem(initKey, '1');
 }
 
 // ── Migration ─────────────────────────────────────────────────────────────────
@@ -203,6 +284,7 @@ function addTaskFromDashboardPreview() {
 }
 
 function toggleTask(tab, id) {
+  _columnScopedToggleTab = tab;
   var data = getData();
   var t = find(data[tab], id);
   if (!t) return;
@@ -218,6 +300,10 @@ function toggleTask(tab, id) {
     t.noteItems.forEach(function(note) { note.done = false; });
     pendingTaskNoteCompletes = null;
   }
+  if (Array.isArray(t.noteItems) && t.noteItems.length) {
+    t.noteItems = sortedNotes(t.noteItems);
+  }
+  data[tab] = sortedTasks(data[tab] || []);
   t.completedAt = t.done ? nextCompletionStamp() : null;
   saveData(data);
   if (t.done) {
@@ -558,6 +644,7 @@ function addNoteItem(tab, taskId, text, skipFocus) {
   if (!t) return;
   if (!Array.isArray(t.noteItems)) t.noteItems = [];
   t.noteItems.push({ id: genId(), text: text, done: false });
+  t.noteItems = sortedNotes(t.noteItems);
   saveData(data);
   render();
   if (!skipFocus) {
@@ -610,6 +697,7 @@ function handleNoteAddBlur(tab, taskId, input) {
 }
 
 function toggleNoteItem(tab, taskId, noteId) {
+  _columnScopedToggleTab = tab;
   var data = getData();
   var t = find(data[tab], taskId);
   if (!t) return;
@@ -627,21 +715,18 @@ function toggleNoteItem(tab, taskId, noteId) {
     t.done = false;
     t.completedAt = null;
   }
-  saveData(data);
-  var cb = document.querySelector('.cb-wrap[data-note-id="'+noteId+'"]');
-  if (cb) {
-    var noteInput = cb.parentElement && cb.parentElement.querySelector('.note-text-input');
-    if (shouldAutoCompleteTask) {
-      runCheckboxTextAnimation(cb, noteInput, note.done, function() {
-        pendingTaskComplete = { tab: tab, id: taskId };
-        render();
-      }, { pop: false });
-      return;
-    }
-    runCheckboxTextAnimation(cb, noteInput, note.done, shouldReopenTask ? render : null, { pop: false });
-    return;
+  t.noteItems = sortedNotes(t.noteItems || []);
+  if (shouldAutoCompleteTask || shouldReopenTask) {
+    data[tab] = sortedTasks(data[tab] || []);
   }
+  pendingNoteToggle = { tab: tab, taskId: taskId, noteId: noteId };
+  saveData(data);
+  if (shouldAutoCompleteTask) pendingTaskComplete = { tab: tab, id: taskId };
   render();
+  var cb = document.querySelector('.cb-wrap[data-note-id="'+noteId+'"]');
+  if (!cb) return;
+  var noteInput = cb.parentElement && cb.parentElement.querySelector('.note-text-input');
+  runCheckboxTextAnimation(cb, noteInput, note.done, null, { pop: false });
 }
 
 function saveNoteText(tab, taskId, noteId, val) {
@@ -650,7 +735,11 @@ function saveNoteText(tab, taskId, noteId, val) {
   var t = find(data[tab], taskId);
   if (!t) return;
   var note = (t.noteItems||[]).find(function(n){ return n.id===noteId; });
-  if (note && val && note.text !== val) { note.text = val; saveData(data); }
+  if (note && val && note.text !== val) {
+    note.text = val;
+    t.noteItems = sortedNotes(t.noteItems || []);
+    saveData(data);
+  }
   render();
 }
 
@@ -665,6 +754,15 @@ function deleteNoteItem(tab, taskId, noteId) {
 function autoResize(el) {
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
+}
+
+function autoResizeIfNeeded(el) {
+  if (!el) return;
+  var nextHeight = el.scrollHeight;
+  var currentHeight = el.offsetHeight;
+  if (Math.abs(nextHeight - currentHeight) < 1) return;
+  el.style.height = 'auto';
+  el.style.height = nextHeight + 'px';
 }
 
 function clamp(n, min, max) {
@@ -727,9 +825,20 @@ function measureStrikeWidth(textEl) {
 }
 
 function syncStrikeSizes() {
-  document.querySelectorAll('.note-text.done, .task-item.done-item .due-text').forEach(function(el) {
-    el.style.setProperty('--strike-size', measureStrikeWidth(el));
-    el.style.setProperty('--strike-start', '-2px');
+  var scopeTabs = arguments.length > 0 ? arguments[0] : null;
+  var roots = [];
+  if (Array.isArray(scopeTabs) && scopeTabs.length) {
+    scopeTabs.forEach(function(tab) {
+      var container = document.getElementById('tasks-' + tab);
+      if (container) roots.push(container);
+    });
+  }
+  if (!roots.length) roots = [document];
+  roots.forEach(function(root) {
+    root.querySelectorAll('.note-text.done, .task-item.done-item .due-text').forEach(function(el) {
+      el.style.setProperty('--strike-size', measureStrikeWidth(el));
+      el.style.setProperty('--strike-start', '-2px');
+    });
   });
 }
 
@@ -1004,10 +1113,38 @@ function setFilter(f) {
 // ── Render ────────────────────────────────────────────────────────────────────
 
 function render() {
+  _pendingFlipReleases = [];
+  var scopedTabsForPostRender = null;
+  if (_columnScopedToggleTab) {
+    scopedTabsForPostRender = [_columnScopedToggleTab];
+  } else if (_undoRedoScopedTabs && _undoRedoScopedTabs.length) {
+    scopedTabsForPostRender = _undoRedoScopedTabs.slice();
+  }
+  var scrollTops = {};
+  ['life','work','pd'].forEach(function(tab) {
+    var containerBefore = document.getElementById('tasks-' + tab);
+    if (containerBefore) scrollTops[tab] = containerBefore.scrollTop;
+  });
   if (!_freezeTaskAvailableHeightSync) syncTaskCardAvailableHeight();
   var data = getData();
   renderDashboard(data);
   ['life','work','pd'].forEach(function(tab){ renderColumn(data, tab); });
+  ['life','work','pd'].forEach(function(tab) {
+    var containerAfter = document.getElementById('tasks-' + tab);
+    if (!containerAfter || scrollTops[tab] === undefined) return;
+    if (containerAfter.scrollTop !== scrollTops[tab]) {
+      containerAfter.scrollTop = scrollTops[tab];
+    }
+  });
+  if (!scopedTabsForPostRender || !scopedTabsForPostRender.length) {
+    var motionTabs = ['life','work','pd'].filter(function(tab) {
+      var container = document.getElementById('tasks-' + tab);
+      if (!container) return false;
+      if ((container._lastFlipMs || 0) > 0) return true;
+      return !!container.querySelector('.task-group.filter-enter');
+    });
+    scopedTabsForPostRender = motionTabs.length ? motionTabs : ['life','work','pd'];
+  }
   if (pendingFilterEnterIds) {
     if (_filterEnterTimer) clearTimeout(_filterEnterTimer);
     _filterEnterTimer = setTimeout(function() {
@@ -1035,10 +1172,23 @@ function render() {
       }
     }
   }
-  document.querySelectorAll('.title-input, .note-text-input').forEach(autoResize);
-  syncStrikeSizes();
+  scopedTabsForPostRender.forEach(function(tab) {
+    var container = document.getElementById('tasks-' + tab);
+    if (!container) return;
+    container.querySelectorAll('.title-input, .note-text-input').forEach(autoResizeIfNeeded);
+  });
+  syncStrikeSizes(scopedTabsForPostRender);
+  if (_pendingFlipReleases && _pendingFlipReleases.length) {
+    var releases = _pendingFlipReleases.slice();
+    requestAnimationFrame(function() {
+      releases.forEach(function(runRelease) { runRelease(); });
+    });
+  }
+  _pendingFlipReleases = null;
   _filterNoMotionCols = null;
   _freezeTaskAvailableHeightSync = false;
+  _undoRedoScopedTabs = null;
+  _columnScopedToggleTab = null;
 }
 
 // Syncs version-state-dependent UI without rebuilding task column DOM.
@@ -1078,6 +1228,7 @@ function renderColumn(data, tab) {
   var displayTasks = getDisplayTasksForFilter(tasks, activeFilter);
   if (displayTasks.length === 0) {
     container._lastFlipMs = 0;
+    if (pendingNoteToggle && pendingNoteToggle.tab === tab) pendingNoteToggle = null;
     var emptyMsg = activeFilter === 'done'   ? 'No completed tasks.'
                  : activeFilter === 'active' ? 'No active tasks.'
                  : 'No tasks yet.';
@@ -1086,8 +1237,15 @@ function renderColumn(data, tab) {
   }
 
   var prevRects = {};
+  var prevNoteRects = {};
+  var noteToggleForTab = pendingNoteToggle && pendingNoteToggle.tab === tab ? pendingNoteToggle : null;
   container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
     prevRects[el.dataset.id] = el.getBoundingClientRect();
+    if (!noteToggleForTab || el.dataset.id !== noteToggleForTab.taskId) return;
+    var taskId = el.dataset.id;
+    el.querySelectorAll('.note-pill[data-note-id]').forEach(function(noteEl) {
+      prevNoteRects[taskId + ':' + noteEl.dataset.noteId] = noteEl.getBoundingClientRect();
+    });
   });
 
   container.innerHTML = displayTasks.map(function(task) {
@@ -1116,7 +1274,7 @@ function renderColumn(data, tab) {
       + ICON_NOTE + '</button>';
 
     var notePillsList = noteItems.map(function(n){
-      return '<div class="note-pill'+(n.done?' done-note':'')+'">'
+      return '<div class="note-pill'+(n.done?' done-note':'')+'" data-note-id="'+n.id+'">'
         + '<span class="cb-wrap cb-sm'+(n.done?' checked':'')+'" data-note-id="'+n.id+'" onclick="toggleNoteItem(\''+tab+'\',\''+task.id+'\',\''+n.id+'\')">'+CB_SVG+'</span>'
         + '<textarea class="note-text-input'+(n.done?' done':'')+'" rows="1"'
         +   ' onblur="saveNoteText(\''+tab+'\',\''+task.id+'\',\''+n.id+'\',this.value)"'
@@ -1174,6 +1332,7 @@ function renderColumn(data, tab) {
     container._lastFlipMs = 0;
     if (pendingTaskInsert && pendingTaskInsert.tab === tab) pendingTaskInsert = null;
     if (pendingTaskComplete && pendingTaskComplete.tab === tab) pendingTaskComplete = null;
+    if (pendingNoteToggle && pendingNoteToggle.tab === tab) pendingNoteToggle = null;
     return;
   }
 
@@ -1182,73 +1341,117 @@ function renderColumn(data, tab) {
   var animated = {};
   var maxFlipMs = 0;
   var completeAnimation = null;
-  newItems.forEach(function(el) {
-    if (el.classList.contains('filter-enter')) return;
-    var prev = prevRects[el.dataset.id];
-    var currentTop = el.getBoundingClientRect().top;
-    var delta = null;
-    if (prev) {
-      delta = prev.top - currentTop;
-    } else if (pendingTaskInsert && pendingTaskInsert.tab === tab && pendingTaskInsert.id === el.dataset.id) {
-      delta = pendingTaskInsert.startTop - currentTop;
+  if (
+    (_columnScopedToggleTab && _columnScopedToggleTab !== tab) ||
+    (_undoRedoScopedTabs && _undoRedoScopedTabs.indexOf(tab) === -1)
+  ) {
+    container._lastFlipMs = 0;
+  } else {
+    newItems.forEach(function(el) {
+      if (el.classList.contains('filter-enter')) return;
+      var prev = prevRects[el.dataset.id];
+      var currentTop = el.getBoundingClientRect().top;
+      var delta = null;
+      if (prev) {
+        delta = prev.top - currentTop;
+      } else if (pendingTaskInsert && pendingTaskInsert.tab === tab && pendingTaskInsert.id === el.dataset.id) {
+        delta = pendingTaskInsert.startTop - currentTop;
+      }
+      if (delta === null || Math.abs(delta) < 0.5) return;
+      animated[el.dataset.id] = delta;
+      maxFlipMs = Math.max(maxFlipMs, getReorderDuration(delta));
+    });
+    if (pendingTaskComplete && pendingTaskComplete.tab === tab) {
+      var completeEl = container.querySelector('.task-group[data-id="'+pendingTaskComplete.id+'"]');
+      var completeDelta = completeEl ? animated[pendingTaskComplete.id] : null;
+      if (completeEl) {
+        completeAnimation = {
+          el: completeEl,
+          durationMs: completeDelta !== undefined && completeDelta !== null ? getReorderDuration(completeDelta) : 420
+        };
+        maxFlipMs = Math.max(maxFlipMs, completeAnimation.durationMs);
+      }
     }
-    if (delta === null || Math.abs(delta) < 0.5) return;
-    animated[el.dataset.id] = delta;
-    maxFlipMs = Math.max(maxFlipMs, getReorderDuration(delta));
-  });
-  if (pendingTaskComplete && pendingTaskComplete.tab === tab) {
-    var completeEl = container.querySelector('.task-group[data-id="'+pendingTaskComplete.id+'"]');
-    var completeDelta = completeEl ? animated[pendingTaskComplete.id] : null;
-    if (completeEl) {
-      completeAnimation = {
-        el: completeEl,
-        durationMs: completeDelta !== undefined && completeDelta !== null ? getReorderDuration(completeDelta) : 420
-      };
-      maxFlipMs = Math.max(maxFlipMs, completeAnimation.durationMs);
+    container._lastFlipMs = maxFlipMs;
+
+    // Phase 1 — pin every pill at its old position (no transition)
+    newItems.forEach(function(el) {
+      el.style.transition = 'none';
+      if (animated[el.dataset.id] !== undefined)
+        el.style.transform = 'translateY(' + animated[el.dataset.id] + 'px)';
+    });
+    container.offsetHeight; // commit Phase 1
+    if (completeAnimation) {
+      var completeItem = completeAnimation.el.querySelector('.task-item');
+      var completeCb = completeItem && completeItem.querySelector('.cb-wrap');
+      var completeTitle = completeItem && completeItem.querySelector('.title-input');
+      if (completeCb && completeTitle) {
+        resetCheckboxTextAnimation(completeCb, completeTitle);
+        completeCb.style.setProperty('--cb-draw-delay', '0ms');
+        completeCb.style.setProperty('--cb-draw-ms', completeAnimation.durationMs + 'ms');
+        completeTitle.classList.add('done');
+        completeCb.classList.add('checked', 'cb-draw-only');
+      }
+    }
+
+    // Phase 2 — release: moving pills slide, static pills snap (hover-fix)
+    var releaseTaskFlip = function() {
+      newItems.forEach(function(el) {
+        var delta = animated[el.dataset.id];
+        if (delta !== undefined) {
+          // Scale timing by travel distance so long drops don't rush to the bottom.
+          el.style.transition = getReorderTransition(delta) + (completeAnimation ? ' 48ms' : '');
+          el.style.willChange = 'transform';
+          el.style.transform  = '';
+          el.addEventListener('transitionend', function handler(e) {
+            if (e.propertyName !== 'transform') return;
+            el.style.transition = el.style.transform = el.style.willChange = '';
+            el.removeEventListener('transitionend', handler);
+          });
+        } else {
+          requestAnimationFrame(function() {
+            el.style.transition = '';
+            el.style.willChange = '';
+          });
+        }
+      });
+    };
+    if (_pendingFlipReleases) _pendingFlipReleases.push(releaseTaskFlip);
+    else releaseTaskFlip();
+  }
+  var noteAnimated = [];
+  if (noteToggleForTab) {
+    var noteTaskEl = container.querySelector('.task-group[data-id="'+noteToggleForTab.taskId+'"]');
+    if (noteTaskEl) {
+      noteTaskEl.querySelectorAll('.note-pill[data-note-id]').forEach(function(noteEl) {
+        var key = noteToggleForTab.taskId + ':' + noteEl.dataset.noteId;
+        var prevNoteRect = prevNoteRects[key];
+        if (!prevNoteRect) return;
+        var deltaY = prevNoteRect.top - noteEl.getBoundingClientRect().top;
+        if (Math.abs(deltaY) < 0.5) return;
+        noteEl.style.transition = 'none';
+        noteEl.style.transform = 'translateY(' + deltaY + 'px)';
+        noteAnimated.push(noteEl);
+      });
     }
   }
-  container._lastFlipMs = maxFlipMs;
-
-  // Phase 1 — pin every pill at its old position (no transition)
-  newItems.forEach(function(el) {
-    el.style.transition = 'none';
-    if (animated[el.dataset.id] !== undefined)
-      el.style.transform = 'translateY(' + animated[el.dataset.id] + 'px)';
-  });
-  container.offsetHeight; // commit Phase 1
-  if (completeAnimation) {
-    var completeItem = completeAnimation.el.querySelector('.task-item');
-    var completeCb = completeItem && completeItem.querySelector('.cb-wrap');
-    var completeTitle = completeItem && completeItem.querySelector('.title-input');
-    if (completeCb && completeTitle) {
-      resetCheckboxTextAnimation(completeCb, completeTitle);
-      completeCb.style.setProperty('--cb-draw-delay', '0ms');
-      completeCb.style.setProperty('--cb-draw-ms', completeAnimation.durationMs + 'ms');
-      completeTitle.classList.add('done');
-      completeCb.classList.add('checked', 'cb-draw-only');
-    }
+  if (noteAnimated.length) {
+    container.offsetHeight;
+    var releaseNoteFlip = function() {
+      noteAnimated.forEach(function(noteEl) {
+        noteEl.style.transition = 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)';
+        noteEl.style.transform = '';
+        noteEl.addEventListener('transitionend', function handler(e) {
+          if (e.propertyName !== 'transform') return;
+          noteEl.style.transition = '';
+          noteEl.style.transform = '';
+          noteEl.removeEventListener('transitionend', handler);
+        });
+      });
+    };
+    if (_pendingFlipReleases) _pendingFlipReleases.push(releaseNoteFlip);
+    else releaseNoteFlip();
   }
-
-  // Phase 2 — release: moving pills slide, static pills snap (hover-fix)
-  newItems.forEach(function(el) {
-    var delta = animated[el.dataset.id];
-    if (delta !== undefined) {
-      // Scale timing by travel distance so long drops don't rush to the bottom.
-      el.style.transition = getReorderTransition(delta) + (completeAnimation ? ' 48ms' : '');
-      el.style.willChange = 'transform';
-      el.style.transform  = '';
-      el.addEventListener('transitionend', function handler(e) {
-        if (e.propertyName !== 'transform') return;
-        el.style.transition = el.style.transform = el.style.willChange = '';
-        el.removeEventListener('transitionend', handler);
-      });
-    } else {
-      requestAnimationFrame(function() {
-        el.style.transition = '';
-        el.style.willChange = '';
-      });
-    }
-  });
   if (pendingTaskNoteCompletes && pendingTaskNoteCompletes.tab === tab) {
     pendingTaskNoteCompletes.noteIds.forEach(function(noteId) {
       var noteCb = container.querySelector('.cb-wrap[data-note-id="'+noteId+'"]');
@@ -1259,6 +1462,7 @@ function renderColumn(data, tab) {
   }
   if (pendingTaskInsert && pendingTaskInsert.tab === tab) pendingTaskInsert = null;
   if (pendingTaskComplete && pendingTaskComplete.tab === tab) pendingTaskComplete = null;
+  if (pendingNoteToggle && pendingNoteToggle.tab === tab) pendingNoteToggle = null;
 }
 
 function renderDashboard(data) {
@@ -1396,4 +1600,5 @@ document.addEventListener('keydown', function(e) {
 });
 
 migrateIfNeeded();
+applyInitialOrderingOnce();
 render();

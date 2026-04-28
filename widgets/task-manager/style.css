@@ -1037,6 +1037,7 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   padding-bottom: 14px;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   flex: 1;
   min-height: 0;
   max-height: none;
