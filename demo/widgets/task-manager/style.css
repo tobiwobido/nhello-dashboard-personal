@@ -70,7 +70,44 @@
 .dashboard-divider-center {
   display: block;
 }
-.chart-heading { font-size: 20px; font-weight: 700; color: var(--text-primary); white-space: nowrap; }
+.chart-heading {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  cursor: pointer;
+  transform-origin: center;
+  transition: transform 0.2s ease;
+}
+.chart-heading:hover {
+  transform: translateY(-2px) scale(1.06);
+}
+.chart-heading.progress-title-exit {
+  animation: progress-title-exit 0.24s ease forwards;
+}
+.chart-heading.progress-title-enter {
+  animation: progress-title-enter 0.32s ease forwards;
+}
+@keyframes progress-title-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+@keyframes progress-title-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 .chart-sub { font-size: 14px; color: var(--text-muted); white-space: nowrap; }
 .dash-divider {
   width: 1px;
@@ -171,12 +208,18 @@ body.dashboard-topbar-preview .dashboard-category-select {
   outline: none;
   transition: border-color 0.15s ease;
 }
+body.dashboard-topbar-preview .dashboard-add-input-wrap {
+  position: relative;
+  width: 186px;
+  min-width: 0;
+}
 body.dashboard-topbar-preview .dashboard-add-group input[type="text"]:hover,
 body.dashboard-topbar-preview .dashboard-category-select:hover {
   border-color: rgba(255,255,255,0.12);
 }
 body.dashboard-topbar-preview .dashboard-add-group input[type="text"] {
-  width: 186px;
+  width: 100%;
+  padding-right: 30px;
 }
 body.dashboard-topbar-preview .dashboard-add-group input[type="text"]:focus,
 body.dashboard-topbar-preview .dashboard-category-select:focus {
@@ -198,6 +241,39 @@ body.dashboard-topbar-preview .dashboard-category-select {
 }
 body.dashboard-topbar-preview .dashboard-add-btn {
   flex: 0 0 42px;
+}
+body.dashboard-topbar-preview .dashboard-add-date-trigger {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-hint);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+body.dashboard-topbar-preview .dashboard-add-date-trigger:hover {
+  color: var(--text-muted);
+}
+body.dashboard-topbar-preview .dashboard-add-date-trigger.has-date {
+  width: auto;
+  max-width: calc(100% - 16px);
+  height: auto;
+  right: 10px;
+}
+body.dashboard-topbar-preview .dashboard-add-date-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1;
+  white-space: nowrap;
 }
 body.dashboard-topbar-preview .col-add {
   display: none;
@@ -291,9 +367,15 @@ body.dashboard-topbar-preview-v2 .dashboard-add-group {
   justify-content: center;
 }
 
-body.dashboard-topbar-preview-v2 #dashboard-add-input {
+body.dashboard-topbar-preview-v2 .dashboard-add-input-wrap {
   grid-area: input;
   width: 100%;
+  position: relative;
+}
+
+body.dashboard-topbar-preview-v2 #dashboard-add-input {
+  width: 100%;
+  padding-right: 30px;
 }
 
 body.dashboard-topbar-preview-v2 #dashboard-add-category {
@@ -436,6 +518,39 @@ body.dashboard-topbar-preview-v2 .dashboard-add-btn .btn-icon {
 
 body.dashboard-topbar-preview-v2 .dashboard-add-btn .add-icon-line {
   background: #111;
+}
+body.dashboard-topbar-preview-v2 .dashboard-add-date-trigger {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-hint);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+body.dashboard-topbar-preview-v2 .dashboard-add-date-trigger:hover {
+  color: var(--text-muted);
+}
+body.dashboard-topbar-preview-v2 .dashboard-add-date-trigger.has-date {
+  width: auto;
+  max-width: calc(100% - 16px);
+  height: auto;
+  right: 10px;
+}
+body.dashboard-topbar-preview-v2 .dashboard-add-date-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1;
+  white-space: nowrap;
 }
 
 body.dashboard-topbar-preview-v2 .dashboard-status-stack .dash-pill {

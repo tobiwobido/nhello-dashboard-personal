@@ -346,7 +346,7 @@ function migrateIfNeeded() {
 
 // ── Task operations ───────────────────────────────────────────────────────────
 
-function createTaskFromInputs(tab, text, priority, addBtn) {
+function createTaskFromInputs(tab, text, priority, addBtn, dueDate) {
   if (addBtn) {
     clearTimeout(addBtn._confirmTimer);
     addBtn.classList.remove('is-confirmed');
@@ -360,7 +360,7 @@ function createTaskFromInputs(tab, text, priority, addBtn) {
   if (!data[tab]) data[tab] = [];
   var newTask = {
     id: genId(), text: text, done: false,
-    priority: priority || 'medium', dueDate: null, noteItems: [],
+    priority: priority || 'medium', dueDate: dueDate || null, noteItems: [],
     children: []
   };
   data[tab].push(newTask);
@@ -395,7 +395,15 @@ function addTaskFromDashboardPreview() {
   if (!input || !category) return;
   var text = input.value.trim();
   if (!text) return;
-  createTaskFromInputs(category.value || 'life', text, priority ? (priority.value || 'medium') : 'medium', addBtn);
+  createTaskFromInputs(
+    category.value || 'life',
+    text,
+    priority ? (priority.value || 'medium') : 'medium',
+    addBtn,
+    composerDueDate
+  );
+  composerDueDate = null;
+  syncComposerDateTriggerUI();
   input.value = '';
   if (priority) priority.value = 'medium';
 }
@@ -629,10 +637,34 @@ function saveDueDate(tab, id, val) {
 
 // ── Custom calendar ───────────────────────────────────────────────────────────
 
-var calState = { tab: null, taskId: null, year: 0, month: 0, selectedISO: null };
+var composerDueDate = null;
+var calState = { mode: 'task', tab: null, taskId: null, year: 0, month: 0, selectedISO: null };
 var CAL_MONTHS = ['January','February','March','April','May','June','July',
                   'August','September','October','November','December'];
 var CAL_DAYS   = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+function syncComposerDateTriggerUI() {
+  var trigger = document.getElementById('dashboard-add-date-trigger');
+  if (!trigger) return;
+  if (!trigger.dataset.iconMarkup) trigger.dataset.iconMarkup = trigger.innerHTML;
+  var hasDate = !!composerDueDate;
+  trigger.innerHTML = hasDate
+    ? '<span class="dashboard-add-date-text">' + fmtISO(composerDueDate) + '</span>'
+    : trigger.dataset.iconMarkup;
+  trigger.classList.toggle('has-date', hasDate);
+  trigger.title = hasDate ? ('Due: ' + fmtISO(composerDueDate) + ' (click to change)') : 'Set due date';
+  trigger.setAttribute('aria-label', hasDate ? ('Change due date (currently ' + fmtISO(composerDueDate) + ')') : 'Set due date');
+}
+
+function bindComposerCalendarTrigger() {
+  var trigger = document.getElementById('dashboard-add-date-trigger');
+  if (!trigger || trigger._calendarBound) return;
+  trigger._calendarBound = true;
+  trigger.addEventListener('click', function() {
+    openComposerCustomCal(trigger);
+  });
+  syncComposerDateTriggerUI();
+}
 
 function buildCalendarDOM() {
   if (document.getElementById('custom-cal')) return;
@@ -652,7 +684,10 @@ function buildCalendarDOM() {
   document.addEventListener('mousedown', function(e) {
     var cal = document.getElementById('custom-cal');
     if (!cal || cal.style.display === 'none') return;
-    if (!cal.contains(e.target) && !e.target.closest('.date-chip')) cal.style.display = 'none';
+    if (!cal.contains(e.target)
+        && !e.target.closest('.date-chip')
+        && !e.target.closest('.cal-icon-btn')
+        && !e.target.closest('.dashboard-add-date-trigger')) cal.style.display = 'none';
   });
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') { var cal = document.getElementById('custom-cal'); if (cal) cal.style.display = 'none'; }
@@ -662,7 +697,8 @@ function buildCalendarDOM() {
 function openCustomCal(tab, taskId, currentISO, chipEl) {
   buildCalendarDOM();
   var cal = document.getElementById('custom-cal');
-  if (cal.style.display !== 'none' && calState.taskId === taskId) { cal.style.display = 'none'; return; }
+  if (cal.style.display !== 'none' && calState.mode === 'task' && calState.taskId === taskId) { cal.style.display = 'none'; return; }
+  calState.mode = 'task';
   calState.tab = tab;
   calState.taskId = taskId;
   calState.selectedISO = currentISO || null;
@@ -674,6 +710,35 @@ function openCustomCal(tab, taskId, currentISO, chipEl) {
   var popup = cal.querySelector('.cal-popup');
   var pw = popup ? popup.offsetWidth : 224, ph = popup ? popup.offsetHeight : 260;
   var rect = chipEl.getBoundingClientRect();
+  var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  var vw = window.innerWidth, vh = window.innerHeight;
+  var left = cx, top = cy;
+  if (left + pw > vw - 8) left = vw - pw - 8;
+  if (top  + ph > vh - 8) top  = cy - ph;
+  if (left < 8) left = 8;
+  if (top  < 8) top  = 8;
+  cal.style.left = left + 'px';
+  cal.style.top  = top  + 'px';
+}
+
+function openComposerCustomCal(triggerEl) {
+  buildCalendarDOM();
+  var cal = document.getElementById('custom-cal');
+  if (!triggerEl) triggerEl = document.getElementById('dashboard-add-date-trigger');
+  if (!triggerEl) return;
+  if (cal.style.display !== 'none' && calState.mode === 'composer') { cal.style.display = 'none'; return; }
+  calState.mode = 'composer';
+  calState.tab = null;
+  calState.taskId = null;
+  calState.selectedISO = composerDueDate || null;
+  var base = composerDueDate ? new Date(composerDueDate + 'T00:00:00') : new Date();
+  calState.year  = base.getFullYear();
+  calState.month = base.getMonth();
+  renderCalGrid();
+  cal.style.display = 'block';
+  var popup = cal.querySelector('.cal-popup');
+  var pw = popup ? popup.offsetWidth : 224, ph = popup ? popup.offsetHeight : 260;
+  var rect = triggerEl.getBoundingClientRect();
   var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
   var vw = window.innerWidth, vh = window.innerHeight;
   var left = cx, top = cy;
@@ -732,13 +797,23 @@ function calCell(displayDay, year, month, day, today, otherMonth) {
 
 function calPick(iso) {
   calState.selectedISO = iso;
-  saveDueDate(calState.tab, calState.taskId, iso);
+  if (calState.mode === 'composer') {
+    composerDueDate = iso;
+    syncComposerDateTriggerUI();
+  } else {
+    saveDueDate(calState.tab, calState.taskId, iso);
+  }
   document.getElementById('custom-cal').style.display = 'none';
 }
 
 function calClearDate() {
   calState.selectedISO = null;
-  saveDueDate(calState.tab, calState.taskId, '');
+  if (calState.mode === 'composer') {
+    composerDueDate = null;
+    syncComposerDateTriggerUI();
+  } else {
+    saveDueDate(calState.tab, calState.taskId, '');
+  }
   document.getElementById('custom-cal').style.display = 'none';
 }
 
@@ -1599,23 +1674,125 @@ function renderColumn(data, tab) {
 }
 
 function renderDashboard(data) {
+  // Internal progress-card view state (default stays Today).
+  // Kept local to dashboard progress logic; UI wiring comes in later steps.
+  if (!renderDashboard._progressViewState) {
+    renderDashboard._progressViewState = {
+      current: 'today',
+      order: ['today', 'week', 'total'],
+      pendingSwitch: false,
+      titleSwapTimer: null
+    };
+  }
+  bindComposerCalendarTrigger();
+  syncComposerDateTriggerUI();
+  var state = renderDashboard._progressViewState;
+  var dashboardEl = document.querySelector('#panel-task-manager .dashboard');
+  var donutWrapEl = dashboardEl && dashboardEl.querySelector('.dashboard-left');
+  var progressTextEl = dashboardEl && dashboardEl.querySelector('.dashboard-middle');
+  var prevDonutRect = state.pendingSwitch && donutWrapEl ? donutWrapEl.getBoundingClientRect() : null;
+  var prevTextRect = state.pendingSwitch && progressTextEl ? progressTextEl.getBoundingClientRect() : null;
+  var titleEl = document.querySelector('#panel-task-manager .chart-heading');
+  if (titleEl && !titleEl._progressViewBound) {
+    titleEl._progressViewBound = true;
+    titleEl.addEventListener('click', function() {
+      var state = renderDashboard._progressViewState;
+      if (!state || !Array.isArray(state.order) || !state.order.length) return;
+      if (state.titleSwapTimer) return;
+      titleEl.classList.remove('progress-title-enter');
+      titleEl.classList.add('progress-title-exit');
+      var idx = state.order.indexOf(state.current);
+      var nextView = state.order[(idx + 1) % state.order.length];
+      state.titleSwapTimer = setTimeout(function() {
+        state.current = nextView;
+        state.pendingSwitch = true;
+        renderDashboard(getData());
+        titleEl.classList.remove('progress-title-exit');
+        titleEl.classList.add('progress-title-enter');
+        setTimeout(function() {
+          titleEl.classList.remove('progress-title-enter');
+        }, 320);
+        state.titleSwapTimer = null;
+      }, 240);
+    });
+  }
   var today = todayISO();
-  var allOpen = ['life','work','pd'].reduce(function(acc, tab){
-    return acc.concat((data[tab]||[]).filter(function(t){ return !t.done; }));
+  var allTasks = ['life','work','pd'].reduce(function(acc, tab){
+    return acc.concat(data[tab] || []);
   }, []);
-  var allDone = ['life','work','pd'].reduce(function(acc, tab){
-    return acc.concat((data[tab]||[]).filter(function(t){ return t.done; }));
-  }, []);
-  var totalTasks = allOpen.length + allDone.length;
-  var doneTasks  = allDone.length;
-  var pct        = totalTasks > 0 ? Math.round(doneTasks / totalTasks * 100) : 0;
-  var overdue    = allOpen.filter(function(t){ return t.dueDate && t.dueDate < today; }).length;
-  var dueToday   = allOpen.filter(function(t){ return t.dueDate && t.dueDate === today; }).length;
+  var allOpen = allTasks.filter(function(t){ return !t.done; });
+
+  function toISODate(dateObj) {
+    return dateObj.getFullYear() + '-'
+      + String(dateObj.getMonth() + 1).padStart(2, '0') + '-'
+      + String(dateObj.getDate()).padStart(2, '0');
+  }
+
+  // Normalize task dates to YYYY-MM-DD; invalid/missing => null (undated).
+  function normalizeDueDate(raw) {
+    if (!raw) return null;
+    var s = String(raw).trim();
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    var y = +m[1], mo = +m[2], d = +m[3];
+    var dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return toISODate(dt);
+  }
+
+  var normalizedToday = normalizeDueDate(today) || today;
+  var todayDate = new Date(normalizedToday + 'T00:00:00');
+  var startOfWeekDate = new Date(todayDate);
+  startOfWeekDate.setDate(todayDate.getDate() - todayDate.getDay());
+  var endOfWeekDate = new Date(startOfWeekDate);
+  endOfWeekDate.setDate(startOfWeekDate.getDate() + 6);
+  var startOfWeek = toISODate(startOfWeekDate);
+  var endOfWeek = toISODate(endOfWeekDate);
+
+  function isInCurrentWeek(iso) {
+    return iso >= startOfWeek && iso <= endOfWeek;
+  }
+
+  function getIncludedTasksForView(view) {
+    if (view === 'total') return allTasks.slice();
+    if (view === 'week') {
+      return allTasks.filter(function(t) {
+        var due = normalizeDueDate(t.dueDate);
+        return !!due && isInCurrentWeek(due);
+      });
+    }
+    // Default: today view
+    return allTasks.filter(function(t) {
+      var due = normalizeDueDate(t.dueDate);
+      return !!due && due === normalizedToday;
+    });
+  }
+
+  var currentView = (renderDashboard._progressViewState && renderDashboard._progressViewState.current) || 'today';
+  if (titleEl) {
+    titleEl.textContent = currentView === 'week'
+      ? "This Week's Progress"
+      : currentView === 'total'
+        ? 'Total Progress'
+        : "Today's Progress";
+  }
+  var included = getIncludedTasksForView(currentView);
+  var completedIncluded = included.filter(function(t){ return t.done; }).length;
+  var totalIncluded = included.length;
+  var pct = totalIncluded > 0 ? Math.round((completedIncluded / totalIncluded) * 100) : 0;
+  var overdue = allOpen.filter(function(t){
+    var due = normalizeDueDate(t.dueDate);
+    return !!due && due < normalizedToday;
+  }).length;
+  var dueToday = allOpen.filter(function(t){
+    var due = normalizeDueDate(t.dueDate);
+    return !!due && due === normalizedToday;
+  }).length;
   var pctEl  = document.getElementById('donut-pct');
   var fillEl = document.getElementById('donut-fill');
   var subEl  = document.getElementById('chart-sub');
   if (pctEl) pctEl.textContent = pct + '%';
-  if (subEl) subEl.textContent = doneTasks + ' of ' + totalTasks + ' tasks completed';
+  if (subEl) subEl.textContent = completedIncluded + ' of ' + totalIncluded + ' tasks completed';
   if (fillEl) {
     var R = (120 / 2) - 6;
     var C = 2 * Math.PI * R;
@@ -1635,13 +1812,36 @@ function renderDashboard(data) {
     }
   }
   var el;
-  el = document.getElementById('cnt-all');     if(el) el.textContent = totalTasks;
+  el = document.getElementById('cnt-all');     if(el) el.textContent = allTasks.length;
   el = document.getElementById('cnt-active');  if(el) el.textContent = allOpen.length;
-  el = document.getElementById('cnt-done');    if(el) el.textContent = doneTasks;
+  el = document.getElementById('cnt-done');    if(el) el.textContent = allTasks.length - allOpen.length;
   el = document.getElementById('cnt-overdue'); if(el) el.textContent = overdue;
   el = document.getElementById('cnt-today');   if(el) el.textContent = dueToday;
   el = document.getElementById('pill-overdue'); if(el) el.classList.toggle('dim', overdue === 0);
   el = document.getElementById('pill-today');   if(el) el.classList.toggle('dim', dueToday === 0);
+
+  if (state.pendingSwitch && dashboardEl) {
+    function animateProgressTravel(elm, prevRect) {
+      if (!elm || !prevRect) return;
+      var nextRect = elm.getBoundingClientRect();
+      var deltaX = prevRect.left - nextRect.left;
+      if (Math.abs(deltaX) < 0.5) return;
+      elm.style.transition = 'none';
+      elm.style.transform = 'translateX(' + deltaX + 'px)';
+      elm.offsetWidth;
+      elm.style.transition = 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)';
+      elm.style.transform = '';
+      elm.addEventListener('transitionend', function handler(e) {
+        if (e.propertyName !== 'transform') return;
+        elm.style.transition = '';
+        elm.style.transform = '';
+        elm.removeEventListener('transitionend', handler);
+      });
+    }
+    animateProgressTravel(donutWrapEl, prevDonutRect);
+    animateProgressTravel(progressTextEl, prevTextRect);
+    state.pendingSwitch = false;
+  }
 }
 
 function triggerTaskDashboardEntrance() {
