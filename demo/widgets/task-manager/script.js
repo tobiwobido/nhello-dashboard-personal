@@ -15,6 +15,17 @@ var _clearAllDoneTimer = null;
 var _clearDoneTimers = {};
 var _filterTransitionTimer = null;
 var _filterEnterTimer = null;
+var taskColumnDragState = {
+  activeDragTaskId: null,
+  sourceTab: null,
+  targetTab: null
+};
+
+function resetTaskColumnDragState() {
+  taskColumnDragState.activeDragTaskId = null;
+  taskColumnDragState.sourceTab = null;
+  taskColumnDragState.targetTab = null;
+}
 
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
 
@@ -1299,10 +1310,12 @@ function renderColumn(data, tab) {
       ? ' filter-enter'
       : '';
 
-    return '<div class="task-group'+enterClass+'" data-id="'+task.id+'">'
+    var dragHandle = '<span class="task-drag-handle" draggable="true" title="Drag task to another category" aria-label="Drag task" role="button">&#8942;&#8942;</span>';
+    return '<div class="task-group'+enterClass+'" data-id="'+task.id+'" draggable="false">'
       + '<div class="'+ic+'">'
       + '<button class="del-x" onclick="deleteTask(\''+tab+'\',\''+task.id+'\',this)" title="Remove task">'+ICON_CLOSE+'</button>'
       + '<div class="task-main">'
+      +   dragHandle
       +   '<span class="cb-wrap'+(task.done?' checked':'')+'" onclick="toggleTask(\''+tab+'\',\''+task.id+'\')">'+CB_SVG+'</span>'
       +   '<div class="task-body">'
       +     '<div class="title-row">'

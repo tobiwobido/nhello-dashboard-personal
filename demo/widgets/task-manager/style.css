@@ -1288,6 +1288,21 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 
 
 .task-main { display: flex; align-items: center; gap: 7px; min-height: 100%; }
+.task-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  min-width: 12px;
+  margin-top: 1px;
+  color: var(--text-hint);
+  opacity: 0.7;
+  cursor: grab;
+  user-select: none;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+.task-drag-handle:active { cursor: grabbing; }
 .cb-wrap {
   display: inline-flex;
   flex-shrink: 0;

@@ -21,6 +21,131 @@ var _freezeTaskAvailableHeightSync = false;
 var _columnScopedToggleTab = null;
 var _noteToggleRenderTab = null;
 var _pendingFlipReleases = null;
+var taskColumnDragState = {
+  activeDragTaskId: null,
+  sourceTab: null,
+  targetTab: null
+};
+
+function resetTaskColumnDragState() {
+  taskColumnDragState.activeDragTaskId = null;
+  taskColumnDragState.sourceTab = null;
+  taskColumnDragState.targetTab = null;
+}
+
+function shouldCancelTaskDragStart(evt) {
+  var target = evt && evt.target;
+  if (!target || !target.closest) return true;
+  var handle = target.closest('.task-drag-handle');
+  if (!handle) return true;
+  var blockedInteractive = target.closest(
+    'textarea,input,button,select,.cb-wrap,.note-text-input,.note-add-input,.note-add-btn,.note-del,.notes-icon-btn,.cal-icon-btn,.date-chip,.del-x,.pri-badge'
+  );
+  if (blockedInteractive && !blockedInteractive.classList.contains('task-drag-handle')) return true;
+  return false;
+}
+
+function handleTaskDragStart(evt, tab, taskId) {
+  if (shouldCancelTaskDragStart(evt)) {
+    if (evt && evt.preventDefault) evt.preventDefault();
+    resetTaskColumnDragState();
+    return false;
+  }
+  taskColumnDragState.activeDragTaskId = taskId || null;
+  taskColumnDragState.sourceTab = tab || null;
+  taskColumnDragState.targetTab = null;
+  if (evt && evt.dataTransfer) {
+    evt.dataTransfer.effectAllowed = 'move';
+    evt.dataTransfer.setData('text/plain', String(taskId || ''));
+    var handleEl = evt.target && evt.target.closest ? evt.target.closest('.task-drag-handle') : null;
+    var taskGroupEl = handleEl && handleEl.closest ? handleEl.closest('.task-group') : null;
+    if (taskGroupEl && evt.dataTransfer.setDragImage) {
+      var rect = taskGroupEl.getBoundingClientRect();
+      var offsetX = Math.max(0, Math.min(rect.width, (evt.clientX || 0) - rect.left));
+      var offsetY = Math.max(0, Math.min(rect.height, (evt.clientY || 0) - rect.top));
+      evt.dataTransfer.setDragImage(taskGroupEl, offsetX, offsetY);
+    }
+  }
+  return true;
+}
+
+function handleTaskDragEnd() {
+  document.querySelectorAll('.col-tasks.drag-column-over').forEach(function(el) {
+    el.classList.remove('drag-column-over');
+    el._dragDepth = 0;
+  });
+  resetTaskColumnDragState();
+}
+
+function getTaskTabFromContainerId(containerId) {
+  if (containerId === 'tasks-life') return 'life';
+  if (containerId === 'tasks-work') return 'work';
+  if (containerId === 'tasks-pd') return 'pd';
+  return null;
+}
+
+function bindTaskColumnDropZone(container) {
+  if (!container || container._taskDropBound) return;
+  container._taskDropBound = true;
+  container._dragDepth = 0;
+
+  container.addEventListener('dragover', function(evt) {
+    if (!taskColumnDragState.activeDragTaskId) return;
+    if (evt && evt.preventDefault) evt.preventDefault();
+    if (evt && evt.dataTransfer) evt.dataTransfer.dropEffect = 'move';
+    taskColumnDragState.targetTab = getTaskTabFromContainerId(container.id);
+  });
+
+  container.addEventListener('dragenter', function(evt) {
+    if (!taskColumnDragState.activeDragTaskId) return;
+    if (evt && evt.preventDefault) evt.preventDefault();
+    container._dragDepth = (container._dragDepth || 0) + 1;
+    container.classList.add('drag-column-over');
+    taskColumnDragState.targetTab = getTaskTabFromContainerId(container.id);
+  });
+
+  container.addEventListener('dragleave', function() {
+    if (!taskColumnDragState.activeDragTaskId) return;
+    container._dragDepth = Math.max(0, (container._dragDepth || 0) - 1);
+    if (!container._dragDepth) container.classList.remove('drag-column-over');
+  });
+
+  container.addEventListener('drop', function(evt) {
+    if (!taskColumnDragState.activeDragTaskId) return;
+    if (evt && evt.preventDefault) evt.preventDefault();
+    var destTab = getTaskTabFromContainerId(container.id);
+    taskColumnDragState.targetTab = destTab;
+    container._dragDepth = 0;
+    container.classList.remove('drag-column-over');
+    var sourceTab = taskColumnDragState.sourceTab;
+    var taskId = taskColumnDragState.activeDragTaskId;
+    if (!sourceTab || !destTab || !taskId || sourceTab === destTab) {
+      resetTaskColumnDragState();
+      return;
+    }
+    var data = getData();
+    if (!data[sourceTab] || !data[destTab]) {
+      resetTaskColumnDragState();
+      return;
+    }
+    var sourceTasks = data[sourceTab] || [];
+    var taskIndex = sourceTasks.findIndex(function(t) { return t && t.id === taskId; });
+    if (taskIndex < 0) {
+      resetTaskColumnDragState();
+      return;
+    }
+    var taskToMove = sourceTasks[taskIndex];
+    if (!taskToMove) {
+      resetTaskColumnDragState();
+      return;
+    }
+    sourceTasks.splice(taskIndex, 1);
+    data[destTab].push(taskToMove);
+    saveData(data);
+    render();
+    resetTaskColumnDragState();
+  });
+}
 
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
 
@@ -1428,6 +1553,7 @@ function renderColumn(data, tab) {
 
   var container = document.getElementById('tasks-'+tab);
   if (!container) return;
+  bindTaskColumnDropZone(container);
   var suppressFilterMotion = !!(_filterNoMotionCols && _filterNoMotionCols[tab]);
   var addInput = document.getElementById('input-'+tab);
   var addRow = addInput ? addInput.closest('.col-add') : null;
@@ -1507,10 +1633,13 @@ function renderColumn(data, tab) {
       ? ' filter-enter'
       : '';
 
-    return '<div class="task-group'+enterClass+'" data-id="'+task.id+'">'
+    var dragHandle = '<span class="task-drag-handle" draggable="true" title="Drag task to another category" aria-label="Drag task" role="button"'
+      + ' ondragstart="handleTaskDragStart(event,\''+tab+'\',\''+task.id+'\')" ondragend="handleTaskDragEnd()">&#8942;&#8942;</span>';
+    return '<div class="task-group'+enterClass+'" data-id="'+task.id+'" draggable="false">'
       + '<div class="'+ic+'">'
       + '<button class="del-x" onclick="deleteTask(\''+tab+'\',\''+task.id+'\',this)" title="Remove task">'+ICON_CLOSE+'</button>'
       + '<div class="task-main">'
+      +   dragHandle
       +   '<span class="cb-wrap'+(task.done?' checked':'')+'" onclick="toggleTask(\''+tab+'\',\''+task.id+'\')">'+CB_SVG+'</span>'
       +   '<div class="task-body">'
       +     '<div class="title-row">'
