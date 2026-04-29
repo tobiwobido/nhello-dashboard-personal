@@ -1,4 +1,5 @@
 var TM_KEY = 'taskmanager_v2';
+var TODAY_PROGRESS_SNAPSHOT_KEY = TM_KEY + '_today_progress_snapshot_v1';
 var openNotes = {};
 var priDropState = { tab: null, taskId: null };
 var _donutAnimated = false;
@@ -178,6 +179,30 @@ function getData() {
     });
     return d;
   } catch(e) { return { life:[], work:[], pd:[] }; }
+}
+
+function getTodayProgressSnapshot() {
+  try {
+    var snapshot = JSON.parse(localStorage.getItem(TODAY_PROGRESS_SNAPSHOT_KEY) || 'null');
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    var date = typeof snapshot.date === 'string' ? snapshot.date : null;
+    var overdueIds = Array.isArray(snapshot.overdueIds)
+      ? snapshot.overdueIds.filter(function(id) { return id !== null && id !== undefined; }).map(String)
+      : [];
+    if (!date) return null;
+    return {
+      date: date,
+      overdueIds: overdueIds
+    };
+  } catch(e) {
+    return null;
+  }
+}
+
+function saveTodayProgressSnapshot(snapshot) {
+  try {
+    localStorage.setItem(TODAY_PROGRESS_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch(e) {}
 }
 // ── Undo stack ────────────────────────────────────────────────────────────────
 
@@ -2006,6 +2031,7 @@ function renderDashboard(data) {
 
   var normalizedToday = normalizeDueDate(today) || today;
   var todayDate = new Date(normalizedToday + 'T00:00:00');
+  var startOfTodayMs = todayDate.getTime();
   var startOfWeekDate = new Date(todayDate);
   startOfWeekDate.setDate(todayDate.getDate() - todayDate.getDay());
   var endOfWeekDate = new Date(startOfWeekDate);
@@ -2016,6 +2042,38 @@ function renderDashboard(data) {
   function isInCurrentWeek(iso) {
     return iso >= startOfWeek && iso <= endOfWeek;
   }
+
+  function wasCompletedToday(task) {
+    return !!(task && task.done && typeof task.completedAt === 'number' && task.completedAt >= startOfTodayMs);
+  }
+
+  function ensureTodayProgressSnapshot() {
+    var snapshot = getTodayProgressSnapshot();
+    if (snapshot && snapshot.date === normalizedToday) return snapshot;
+
+    // Rebuild the day baseline from tasks that are overdue now plus any overdue tasks
+    // already completed today, so mid-day initialization still preserves today's workload.
+    var overdueIds = allTasks.filter(function(t) {
+      var due = normalizeDueDate(t.dueDate);
+      if (!due || due >= normalizedToday) return false;
+      return !t.done || wasCompletedToday(t);
+    }).map(function(t) {
+      return String(t.id);
+    });
+
+    snapshot = {
+      date: normalizedToday,
+      overdueIds: overdueIds
+    };
+    saveTodayProgressSnapshot(snapshot);
+    return snapshot;
+  }
+
+  var todayProgressSnapshot = ensureTodayProgressSnapshot();
+  var todayOverdueIdSet = {};
+  (todayProgressSnapshot.overdueIds || []).forEach(function(id) {
+    todayOverdueIdSet[id] = true;
+  });
 
   function getIncludedTasksForView(view) {
     if (view === 'total') return allTasks.slice();
@@ -2028,7 +2086,7 @@ function renderDashboard(data) {
     // Default: today view
     return allTasks.filter(function(t) {
       var due = normalizeDueDate(t.dueDate);
-      return !!due && due === normalizedToday;
+      return (!!due && due === normalizedToday) || !!todayOverdueIdSet[String(t.id)];
     });
   }
 
