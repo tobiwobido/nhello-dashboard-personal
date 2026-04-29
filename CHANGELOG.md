@@ -1,6 +1,15 @@
 # Changelog
 
-## 2026-04-29 — Filter Animation Consistency and Stability
+## 2026-04-29 â€” Filter Enter Sequencing Polish
+
+### Changed
+- Smoothed filter enter sequencing so newly visible cards join the transition more naturally
+- Delayed enter animations slightly to prevent overlap with shared task movement
+- Improved Done to All transition smoothness for task and note cards
+
+---
+
+## 2026-04-29 â€” Filter Animation Consistency and Stability
 
 ### Added
 - Filter transitions now preserve shared task movement consistently across All, Active, and Done views
@@ -18,7 +27,7 @@
 
 ---
 
-## 2026-04-28 â€” UI Polish, Nested Notes, and Stability Fixes
+## 2026-04-28 Ã¢â‚¬â€ UI Polish, Nested Notes, and Stability Fixes
 
 ### Added
 - Nested notes (notes can now have child notes)
@@ -54,7 +63,7 @@
 
 ---
 
-## 2026-04-26 â€” Core Interaction Features
+## 2026-04-26 Ã¢â‚¬â€ Core Interaction Features
 
 ### Added
 - Drag-and-drop system for moving tasks across columns
@@ -73,7 +82,7 @@
 
 ---
 
-## 2026-04-25 â€” Progress & Input Enhancements
+## 2026-04-25 Ã¢â‚¬â€ Progress & Input Enhancements
 
 ### Added
 - Multi-view progress tracking:
@@ -92,7 +101,7 @@
 
 ---
 
-## 2026-04-24 â€” Initial Dashboard Implementation
+## 2026-04-24 Ã¢â‚¬â€ Initial Dashboard Implementation
 
 ### Added
 - Core task management system
@@ -107,7 +116,7 @@
 
 ---
 
-## 2026-04-20 â€” Initial Development Phase
+## 2026-04-20 Ã¢â‚¬â€ Initial Development Phase
 
 ### Added
 - Initial concept and design of the productivity dashboard
