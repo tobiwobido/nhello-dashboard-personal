@@ -1354,6 +1354,8 @@ function getReorderTransition(delta) {
   return 'transform ' + duration.toFixed(0) + 'ms cubic-bezier(0.2, 0.9, 0.24, 1)';
 }
 
+var TASK_FILTER_FLIP_THRESHOLD_PX = 2.5;
+
 function getDisplayTasksForFilter(tasks, filter) {
   var displayTasks = sortedTasks(tasks || []);
   if (filter === 'active') {
@@ -1468,28 +1470,6 @@ function setFilter(f) {
   }
   var data = getData();
   var exiting = [];
-  var prevFilter = activeFilter;
-  var forceEnterDone = (
-    (prevFilter === 'all' && f === 'done') ||
-    (prevFilter === 'done' && f === 'all')
-  );
-  var isAllActiveSwitch = (
-    (prevFilter === 'all' && f === 'active') ||
-    (prevFilter === 'active' && f === 'all')
-  );
-  var hasAnyScrollableCol = ['life','work','pd'].some(function(tab) {
-    var container = document.getElementById('tasks-' + tab);
-    if (!container) return false;
-    return container.scrollHeight > ((container.clientHeight || 0) + 0.5);
-  });
-  if (isAllActiveSwitch && hasAnyScrollableCol) {
-    _filterNoMotionCols = { life: true, work: true, pd: true };
-    pendingFilterEnterIds = null;
-    _freezeTaskAvailableHeightSync = true;
-    activeFilter = f;
-    render();
-    return;
-  }
   pendingFilterEnterIds = { life: {}, work: {}, pd: {} };
   var noMotionCols = { life: false, work: false, pd: false };
   ['life','work','pd'].forEach(function(tab) {
@@ -1504,40 +1484,15 @@ function setFilter(f) {
       nextIds[task.id] = true;
       if (!currentIds[task.id]) {
         pendingFilterEnterIds[tab][task.id] = true;
-      } else if (forceEnterDone && prevFilter === 'done' && f === 'all' && task.done) {
-        pendingFilterEnterIds[tab][task.id] = true;
       }
     });
     var exitingThisTab = [];
     container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
       if (!nextIds[el.dataset.id]) exitingThisTab.push(el);
     });
-    var suppressMotion = false;
-    if (prevFilter === 'all' && f === 'active' && exitingThisTab.length) {
-      var listViewport = container.clientHeight || 0;
-      var currentScrollable = container.scrollHeight > (listViewport + 0.5);
-      if (currentScrollable && listViewport > 0) {
-        var nextContentHeight = 0;
-        container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
-          if (!nextIds[el.dataset.id]) return;
-          var style = window.getComputedStyle(el);
-          nextContentHeight += el.offsetHeight + (parseFloat(style.marginBottom) || 0);
-        });
-        var remainsScrollable = nextContentHeight > (listViewport + 0.5);
-        suppressMotion = remainsScrollable;
-      }
-    }
-    if (suppressMotion) {
-      noMotionCols[tab] = true;
-      pendingFilterEnterIds[tab] = {};
-      return;
-    }
     exitingThisTab.forEach(function(el) { exiting.push(el); });
   });
   _filterNoMotionCols = noMotionCols;
-  if (forceEnterDone && prevFilter === 'all' && exiting.length === 0) {
-    pendingFilterEnterIds = { life: {}, work: {}, pd: {} };
-  }
   if (!exiting.length) {
     var prevHeightsNoExit = captureColumnHeights();
     activeFilter = f;
@@ -1813,6 +1768,9 @@ function renderColumn(data, tab) {
       + '</div>';
   }).join('');
 
+  // Settle textarea-driven card heights before measuring the rebuilt layout for FLIP.
+  container.querySelectorAll('.title-input, .note-text-input').forEach(autoResizeIfNeeded);
+
   if (suppressFilterMotion) {
     container._lastFlipMs = 0;
     if (pendingTaskInsert && pendingTaskInsert.tab === tab) pendingTaskInsert = null;
@@ -1844,7 +1802,7 @@ function renderColumn(data, tab) {
       } else if (pendingTaskInsert && pendingTaskInsert.tab === tab && pendingTaskInsert.id === el.dataset.id) {
         delta = pendingTaskInsert.startTop - currentTop;
       }
-      if (delta === null || Math.abs(delta) < 0.5) return;
+      if (delta === null || Math.abs(delta) < TASK_FILTER_FLIP_THRESHOLD_PX) return;
       animated[el.dataset.id] = delta;
       maxFlipMs = Math.max(maxFlipMs, getReorderDuration(delta));
     });
