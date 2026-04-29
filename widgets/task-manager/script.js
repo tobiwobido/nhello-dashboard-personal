@@ -16,6 +16,7 @@ var _clearAllDoneTimer = null;
 var _clearDoneTimers = {};
 var _filterTransitionTimer = null;
 var _filterEnterTimer = null;
+var _filterEnterCleanupMs = 380;
 var _filterNoMotionCols = null;
 var _freezeTaskAvailableHeightSync = false;
 var _columnScopedToggleTab = null;
@@ -24,6 +25,10 @@ var _pendingFlipReleases = null;
 var openChildNoteAdds = {};
 var deleteIntentTasks = {};
 var deleteIntentParentNotes = {};
+var FILTER_ENTER_ANIMATION_MS = 260;
+var FILTER_ENTER_DELAY_RATIO = 0.45;
+var FILTER_ENTER_DELAY_MAX_MS = 120;
+var FILTER_ENTER_CLEANUP_BUFFER_MS = 40;
 var taskColumnDragState = {
   activeDragTaskId: null,
   sourceTab: null,
@@ -1516,6 +1521,7 @@ function setFilter(f) {
 
 function render() {
   _pendingFlipReleases = [];
+  _filterEnterCleanupMs = 380;
   var allTabs = ['life','work','pd'];
   var renderTabs = _noteToggleRenderTab
     ? [_noteToggleRenderTab]
@@ -1562,11 +1568,13 @@ function render() {
     if (_filterEnterTimer) clearTimeout(_filterEnterTimer);
     _filterEnterTimer = setTimeout(function() {
       document.querySelectorAll('.task-group.filter-enter').forEach(function(el) {
+        el.style.animationDelay = '';
         el.classList.remove('filter-enter');
       });
       pendingFilterEnterIds = null;
       _filterEnterTimer = null;
-    }, 380);
+      _filterEnterCleanupMs = 380;
+    }, _filterEnterCleanupMs);
   }
   var undoBtn = document.getElementById('filter-undo-btn');
   if (undoBtn) undoBtn.classList.toggle('is-visible', undoStack.length > 0);
@@ -1781,6 +1789,7 @@ function renderColumn(data, tab) {
 
   // FLIP reorder — calculate deltas from pre-render snapshot
   var newItems = container.querySelectorAll('.task-group[data-id]');
+  var enterItems = Array.prototype.slice.call(container.querySelectorAll('.task-group.filter-enter'));
   var animated = {};
   var maxFlipMs = 0;
   var completeAnimation = null;
@@ -1840,6 +1849,24 @@ function renderColumn(data, tab) {
     }
 
     // Phase 2 — release: moving pills slide, static pills snap (hover-fix)
+    if (enterItems.length && maxFlipMs > 0) {
+      var enterDelayMs = Math.min(
+        FILTER_ENTER_DELAY_MAX_MS,
+        Math.round(maxFlipMs * FILTER_ENTER_DELAY_RATIO)
+      );
+      enterItems.forEach(function(el) {
+        el.style.animationDelay = enterDelayMs + 'ms';
+      });
+      _filterEnterCleanupMs = Math.max(
+        _filterEnterCleanupMs,
+        enterDelayMs + FILTER_ENTER_ANIMATION_MS + FILTER_ENTER_CLEANUP_BUFFER_MS
+      );
+    } else if (enterItems.length) {
+      enterItems.forEach(function(el) {
+        el.style.animationDelay = '';
+      });
+    }
+
     var releaseTaskFlip = function() {
       newItems.forEach(function(el) {
         var delta = animated[el.dataset.id];
