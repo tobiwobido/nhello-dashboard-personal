@@ -526,7 +526,7 @@ body.dashboard-topbar-preview-v2 .dashboard-add-btn .add-icon-line {
 body.dashboard-topbar-preview-v2 .dashboard-add-date-trigger {
   position: absolute;
   top: 50%;
-  right: 9px;
+  right: calc((42px - 14px) / 2);
   transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
@@ -538,10 +538,12 @@ body.dashboard-topbar-preview-v2 .dashboard-add-date-trigger {
   border: none;
   color: var(--text-hint);
   cursor: pointer;
-  transition: color 0.15s;
+  transform: translateY(-50%) scale(1);
+  transition: color 0.15s, transform 0.15s;
 }
 body.dashboard-topbar-preview-v2 .dashboard-add-date-trigger:hover {
-  color: var(--text-muted);
+  color: var(--gold);
+  transform: translateY(-50%) scale(1.05);
 }
 body.dashboard-topbar-preview-v2 .dashboard-add-date-trigger.has-date {
   width: auto;
@@ -1511,10 +1513,16 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   color: var(--text-hint);
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.15s;
+  transform: scale(1);
+  transition: opacity 0.15s, color 0.15s, transform 0.15s;
 }
 .task-item:hover .notes-icon-btn,
 .task-item:hover .cal-icon-btn { opacity: 1; }
+.notes-icon-btn:hover,
+.cal-icon-btn:hover {
+  color: var(--gold);
+  transform: scale(1.05);
+}
 
 .note-display {
   margin-top: 4px;
@@ -1613,6 +1621,12 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 .note-item:hover .note-del,
 .note-pill:hover .note-del { opacity: 1; }
 .note-del:hover { color: var(--red); background: rgba(226,75,74,0.12); }
+.note-child-icon-btn {
+  opacity: 0;
+}
+.note-pill:hover .note-child-icon-btn {
+  opacity: 1;
+}
 
 /* ── Note pills (attached below task pill) ── */
 .note-pills {
@@ -1646,6 +1660,11 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 .note-pill.done-note {
   background: var(--surface-2);
   opacity: 0.45;
+}
+.note-pill.removing {
+  animation: pill-remove-collapse 0.26s cubic-bezier(0.4,0,0.2,1) forwards;
+  pointer-events: none;
+  overflow: hidden;
 }
 .note-pill::before {
   content: '';
@@ -1705,6 +1724,21 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   background: var(--border);
   transform: translateY(-50%);
 }
+.note-children {
+  position: relative;
+  margin-left: 14px;
+  margin-top: 1px;
+  padding-left: 12px;
+}
+.note-children::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 8px;
+  width: 1px;
+  background: var(--border);
+}
 
 /* ── Due date as subtitle below task title ── */
 .due-subtitle {
@@ -1763,6 +1797,11 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
 .note-add-btn:hover { background: var(--green); color: #fff; border-color: var(--green); }
 .note-add-row.note-add-row-exit {
   animation: pill-remove-collapse 0.22s cubic-bezier(0.4,0,0.2,1) forwards;
+  pointer-events: none;
+  overflow: hidden;
+}
+.note-add-row.removing {
+  animation: pill-remove-collapse 0.26s cubic-bezier(0.4,0,0.2,1) forwards;
   pointer-events: none;
   overflow: hidden;
 }

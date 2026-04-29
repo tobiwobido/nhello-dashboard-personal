@@ -21,6 +21,9 @@ var _freezeTaskAvailableHeightSync = false;
 var _columnScopedToggleTab = null;
 var _noteToggleRenderTab = null;
 var _pendingFlipReleases = null;
+var openChildNoteAdds = {};
+var deleteIntentTasks = {};
+var deleteIntentParentNotes = {};
 var taskColumnDragState = {
   activeDragTaskId: null,
   sourceTab: null,
@@ -162,9 +165,10 @@ function getData() {
       (d[tab]||[]).forEach(function(task) {
         if (!Array.isArray(task.noteItems)) {
           task.noteItems = (task.notes && task.notes.trim())
-            ? [{ id: genId(), text: task.notes.trim(), done: false }]
+            ? [{ id: genId(), text: task.notes.trim(), done: false, parentNoteId: null }]
             : [];
         }
+        task.noteItems = normalizeNoteItems(task.noteItems);
       });
     });
     return d;
@@ -280,6 +284,38 @@ function runUndoRedoStateAnimations() {
   }
 }
 
+function reconcileTransientNoteUiState(data) {
+  data = data || getData();
+  var taskExists = {};
+  var parentNoteExists = {};
+  ['life','work','pd'].forEach(function(tab) {
+    (data[tab] || []).forEach(function(task) {
+      if (!task || !task.id) return;
+      taskExists[task.id] = true;
+      (task.noteItems || []).forEach(function(note) {
+        if (!note || !note.id) return;
+        if (note.parentNoteId == null) {
+          parentNoteExists[getChildNoteAddKey(task.id, note.id)] = true;
+        }
+      });
+    });
+  });
+  Object.keys(openNotes).forEach(function(taskId) {
+    if (!taskExists[taskId]) delete openNotes[taskId];
+  });
+  Object.keys(openChildNoteAdds).forEach(function(key) {
+    if (!parentNoteExists[key]) delete openChildNoteAdds[key];
+  });
+}
+
+function clearOpenChildNoteInputsForParent(taskId, parentNoteId) {
+  if (!taskId || !parentNoteId) return;
+  var targetKey = getChildNoteAddKey(taskId, parentNoteId);
+  Object.keys(openChildNoteAdds).forEach(function(key) {
+    if (key === targetKey) delete openChildNoteAdds[key];
+  });
+}
+
 function pushUndo() {
   if (_undoing) return;
   var snap = localStorage.getItem(TM_KEY) || JSON.stringify({ life:[], work:[], pd:[] });
@@ -314,6 +350,9 @@ function doUndo() {
       noteId: animationState.noteToggle.noteId
     };
   }
+  openChildNoteAdds = {};
+  var undoData = getData();
+  reconcileTransientNoteUiState(undoData);
   render();
   runUndoRedoStateAnimations();
   return true;
@@ -344,6 +383,9 @@ function doRedo() {
       noteId: animationState.noteToggle.noteId
     };
   }
+  openChildNoteAdds = {};
+  var redoData = getData();
+  reconcileTransientNoteUiState(redoData);
   render();
   runUndoRedoStateAnimations();
   return true;
@@ -410,6 +452,35 @@ function sortedNotes(noteItems) {
   return open.concat(done);
 }
 
+function normalizeNoteItems(noteItems) {
+  return (noteItems || []).map(function(note) {
+    if (!note || typeof note !== 'object') return note;
+    if (!Object.prototype.hasOwnProperty.call(note, 'parentNoteId')) {
+      note.parentNoteId = null;
+    } else if (note.parentNoteId == null) {
+      note.parentNoteId = null;
+    }
+    return note;
+  });
+}
+
+function getTopLevelNotes(noteItems) {
+  return (noteItems || []).filter(function(note) {
+    return note && note.parentNoteId == null;
+  });
+}
+
+function getChildNotes(noteItems, parentId) {
+  return (noteItems || []).filter(function(note) {
+    return note && note.parentNoteId === parentId;
+  });
+}
+
+function addChildNoteItem(tab, taskId, parentNoteId, text, skipFocus) {
+  if (!parentNoteId) return;
+  addNoteItem(tab, taskId, text, skipFocus, parentNoteId);
+}
+
 function applyInitialOrderingOnce() {
   var initKey = TM_KEY + '_order_init_v1';
   if (localStorage.getItem(initKey) === '1') return;
@@ -427,6 +498,7 @@ function applyInitialOrderingOnce() {
 
     tasks.forEach(function(task) {
       if (!Array.isArray(task.noteItems)) task.noteItems = [];
+      task.noteItems = normalizeNoteItems(task.noteItems);
       var beforeNotes = task.noteItems.map(itemKey).join('|');
       task.noteItems = sortedNotes(task.noteItems);
       var afterNotes = task.noteItems.map(itemKey).join('|');
@@ -460,8 +532,9 @@ function migrateIfNeeded() {
         task.dueDate   = task.dueDate  || null;
         if (task.done && typeof task.completedAt !== 'number') task.completedAt = 0;
         task.noteItems = (task.notes && task.notes.trim())
-          ? [{ id: genId(), text: task.notes.trim(), done: false }]
+          ? [{ id: genId(), text: task.notes.trim(), done: false, parentNoteId: null }]
           : [];
+        task.noteItems = normalizeNoteItems(task.noteItems);
         if (!task.children) task.children = [];
       });
     });
@@ -576,6 +649,7 @@ function deleteTask(tab, id, btn) {
     var data = getData();
     data[tab] = (data[tab]||[]).filter(function(t){ return t.id!==id; });
     delete openNotes[id];
+    deleteIntentTasks[id] = false;
     saveData(data); render();
     requestAnimationFrame(function() {
       var nextList = document.getElementById('tasks-'+tab);
@@ -584,6 +658,10 @@ function deleteTask(tab, id, btn) {
     });
   }
   if (!item) { removeFromData(); return; }
+  deleteIntentTasks[id] = true;
+  item.querySelectorAll('.note-add-row').forEach(function(row) {
+    row.classList.add('removing');
+  });
   if (main) main.classList.add('task-reflowing');
   if (list) list.classList.add('is-reflowing');
   item.classList.add('removing');
@@ -757,7 +835,9 @@ function saveDueDate(tab, id, val) {
   var data = getData();
   var t = find(data[tab], id);
   if (t) t.dueDate = val || null;
-  saveData(data); render();
+  saveData(data);
+  _columnScopedToggleTab = tab;
+  render();
 }
 
 // ── Custom calendar ───────────────────────────────────────────────────────────
@@ -944,6 +1024,11 @@ function calClearDate() {
 
 function toggleNotes(taskId) {
   openNotes[taskId] = !openNotes[taskId];
+  if (!openNotes[taskId]) {
+    Object.keys(openChildNoteAdds).forEach(function(key) {
+      if (key.indexOf(taskId + ':') === 0) delete openChildNoteAdds[key];
+    });
+  }
   render();
   if (openNotes[taskId]) {
     setTimeout(function(){
@@ -953,14 +1038,15 @@ function toggleNotes(taskId) {
   }
 }
 
-function addNoteItem(tab, taskId, text, skipFocus) {
+function addNoteItem(tab, taskId, text, skipFocus, parentNoteId) {
   text = (text || '').trim();
   if (!text) return;
   var data = getData();
   var t = find(data[tab], taskId);
   if (!t) return;
   if (!Array.isArray(t.noteItems)) t.noteItems = [];
-  t.noteItems.push({ id: genId(), text: text, done: false });
+  t.noteItems.push({ id: genId(), text: text, done: false, parentNoteId: parentNoteId || null });
+  t.noteItems = normalizeNoteItems(t.noteItems);
   t.noteItems = sortedNotes(t.noteItems);
   saveData(data);
   render();
@@ -994,6 +1080,7 @@ function handleNoteAddKeydown(e, tab, taskId) {
 
 function handleNoteAddBlur(tab, taskId, input) {
   if (!document.body.contains(input)) return;
+  if (deleteIntentTasks[taskId]) return;
   if (input._enterSubmitted) {
     input._enterSubmitted = false;
     return;
@@ -1062,12 +1149,53 @@ function saveNoteText(tab, taskId, noteId, val) {
   render();
 }
 
-function deleteNoteItem(tab, taskId, noteId) {
+function deleteNoteItem(tab, taskId, noteId, btn) {
+  var noteEl = btn && btn.closest
+    ? btn.closest('.note-pill[data-note-id]')
+    : document.querySelector('.note-pill[data-note-id="'+noteId+'"]');
   var data = getData();
-  var t = find(data[tab], taskId);
-  if (!t) return;
-  t.noteItems = (t.noteItems||[]).filter(function(n){ return n.id!==noteId; });
-  saveData(data); render();
+  var task = find(data[tab], taskId);
+  var noteItems = task && Array.isArray(task.noteItems) ? task.noteItems : [];
+  var noteIdsToRemove = [noteId];
+  var isParentDelete = false;
+  noteItems.forEach(function(note) {
+    if (note && note.parentNoteId === noteId) {
+      noteIdsToRemove.push(note.id);
+      isParentDelete = true;
+    }
+  });
+  var parentGroup = noteEl && noteEl.closest ? noteEl.closest('.task-group[data-id]') : null;
+  var noteElsToAnimate = parentGroup
+    ? noteIdsToRemove.map(function(id) {
+        return parentGroup.querySelector('.note-pill[data-note-id="'+id+'"]');
+      }).filter(Boolean)
+    : (noteEl ? [noteEl] : []);
+  if (isParentDelete && parentGroup) {
+    var parentKey = getChildNoteAddKey(taskId, noteId);
+    clearOpenChildNoteInputsForParent(taskId, noteId);
+    var childAddInput = parentGroup.querySelector('#note-add-child-'+taskId+'-'+noteId);
+    var childAddRow = childAddInput && childAddInput.closest ? childAddInput.closest('.note-add-row') : null;
+    if (childAddRow) noteElsToAnimate.push(childAddRow);
+    deleteIntentParentNotes[parentKey] = true;
+  }
+  function removeFromData() {
+    var nextData = getData();
+    var t = find(nextData[tab], taskId);
+    if (!t) return;
+    t.noteItems = (t.noteItems||[]).filter(function(n){ return noteIdsToRemove.indexOf(n.id) === -1; });
+    if (isParentDelete) {
+      var parentKey = getChildNoteAddKey(taskId, noteId);
+      deleteIntentParentNotes[parentKey] = false;
+      clearOpenChildNoteInputsForParent(taskId, noteId);
+    }
+    saveData(nextData);
+    _columnScopedToggleTab = tab;
+    render();
+  }
+  if (!noteElsToAnimate.length) { removeFromData(); return; }
+  if (noteElsToAnimate.some(function(el) { return el.classList.contains('removing'); })) return;
+  noteElsToAnimate.forEach(function(el) { el.classList.add('removing'); });
+  setTimeout(removeFromData, 260);
 }
 
 function autoResize(el) {
@@ -1502,7 +1630,7 @@ function render() {
       }
     }
   }
-  scopedTabsForPostRender.forEach(function(tab) {
+  renderTabs.forEach(function(tab) {
     var container = document.getElementById('tasks-' + tab);
     if (!container) return;
     container.querySelectorAll('.title-input, .note-text-input').forEach(autoResizeIfNeeded);
@@ -1605,15 +1733,37 @@ function renderColumn(data, tab) {
     var notesIconBtn = '<button class="notes-icon-btn" onclick="toggleNotes(\''+task.id+'\')" title="Add a note">'
       + ICON_NOTE + '</button>';
 
-    var notePillsList = noteItems.map(function(n){
+    function renderNotePill(n, isChild) {
+      var childAddBtn = !isChild
+        ? '<button class="notes-icon-btn note-child-icon-btn" onmousedown="event.preventDefault()" onclick="openChildNoteAdd(event,\''+tab+'\',\''+task.id+'\',\''+n.id+'\')" title="Add child note">' + ICON_NOTE + '</button>'
+        : '';
       return '<div class="note-pill'+(n.done?' done-note':'')+'" data-note-id="'+n.id+'">'
         + '<span class="cb-wrap cb-sm'+(n.done?' checked':'')+'" data-note-id="'+n.id+'" onclick="toggleNoteItem(\''+tab+'\',\''+task.id+'\',\''+n.id+'\')">'+CB_SVG+'</span>'
         + '<textarea class="note-text-input'+(n.done?' done':'')+'" rows="1"'
         +   ' onblur="saveNoteText(\''+tab+'\',\''+task.id+'\',\''+n.id+'\',this.value)"'
         +   ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}"'
         +   ' oninput="autoResize(this)">'+escHtml(n.text)+'</textarea>'
-        + '<button class="note-del" onclick="deleteNoteItem(\''+tab+'\',\''+task.id+'\',\''+n.id+'\')" title="Remove note">&#215;</button>'
+        + childAddBtn
+        + '<button class="note-del" onmousedown="markParentNoteDeleteIntent(\''+task.id+'\',\''+n.id+'\')" onclick="deleteNoteItem(\''+tab+'\',\''+task.id+'\',\''+n.id+'\',this)" title="Remove note">&#215;</button>'
         + '</div>';
+    }
+
+    var topLevelNotes = getTopLevelNotes(noteItems);
+    var notePillsList = topLevelNotes.map(function(n){
+      var childNotes = getChildNotes(noteItems, n.id);
+      var childAddKey = getChildNoteAddKey(task.id, n.id);
+      var childAddRow = openChildNoteAdds[childAddKey]
+        ? '<div class="note-add-row note-add-row-child">'
+          + '<input type="text" class="note-add-input" id="note-add-child-'+task.id+'-'+n.id+'" placeholder="Add a child note..."'
+          + ' onkeydown="handleChildNoteAddKeydown(event,\''+tab+'\',\''+task.id+'\',\''+n.id+'\')"'
+          + ' onblur="handleChildNoteAddBlur(\''+tab+'\',\''+task.id+'\',\''+n.id+'\',this)">'
+          + '<button class="note-add-btn" onmousedown="event.preventDefault()" onclick="submitChildNoteAdd(\''+tab+'\',\''+task.id+'\',\''+n.id+'\',document.getElementById(\'note-add-child-'+task.id+'-'+n.id+'\'))">+</button>'
+          + '</div>'
+        : '';
+      var childrenHtml = childNotes.length
+        ? '<div class="note-children">' + childNotes.map(function(cn){ return renderNotePill(cn, true); }).join('') + childAddRow + '</div>'
+        : (childAddRow ? '<div class="note-children">' + childAddRow + '</div>' : '');
+      return renderNotePill(n, false) + childrenHtml;
     }).join('');
 
     var addNoteRow = openNotes[task.id]
@@ -1637,7 +1787,7 @@ function renderColumn(data, tab) {
       + ' ondragstart="handleTaskDragStart(event,\''+tab+'\',\''+task.id+'\')" ondragend="handleTaskDragEnd()">&#8942;&#8942;</span>';
     return '<div class="task-group'+enterClass+'" data-id="'+task.id+'" draggable="false">'
       + '<div class="'+ic+'">'
-      + '<button class="del-x" onclick="deleteTask(\''+tab+'\',\''+task.id+'\',this)" title="Remove task">'+ICON_CLOSE+'</button>'
+      + '<button class="del-x" onmousedown="markTaskDeleteIntent(\''+task.id+'\')" onclick="deleteTask(\''+tab+'\',\''+task.id+'\',this)" title="Remove task">'+ICON_CLOSE+'</button>'
       + '<div class="task-main">'
       +   dragHandle
       +   '<span class="cb-wrap'+(task.done?' checked':'')+'" onclick="toggleTask(\''+tab+'\',\''+task.id+'\')">'+CB_SVG+'</span>'
@@ -1973,6 +2123,104 @@ function renderDashboard(data) {
   }
 }
 
+function handleChildNoteAddKeydown(e, tab, taskId, parentNoteId) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    var inputId = 'note-add-child-' + taskId + '-' + parentNoteId;
+    var inp = document.getElementById(inputId);
+    if (!inp) return;
+    inp._enterSubmitted = true;
+    submitChildNoteAdd(tab, taskId, parentNoteId, inp);
+  } else if (e.key === 'Escape') {
+    delete openChildNoteAdds[getChildNoteAddKey(taskId, parentNoteId)];
+    _columnScopedToggleTab = tab;
+    render();
+  }
+}
+
+function handleChildNoteAddBlur(tab, taskId, parentNoteId, input) {
+  if (!document.body.contains(input)) return;
+  if (deleteIntentTasks[taskId]) return;
+  var key = getChildNoteAddKey(taskId, parentNoteId);
+  if (deleteIntentParentNotes[key]) return;
+  if (input._submitHandled) return;
+  if (input._enterSubmitted) {
+    input._enterSubmitted = false;
+    return;
+  }
+  var text = (input.value || '').trim();
+  if (text) {
+    addChildNoteItem(tab, taskId, parentNoteId, text, true);
+    delete openChildNoteAdds[key];
+    _columnScopedToggleTab = tab;
+    render();
+    return;
+  }
+  var row = input.closest ? input.closest('.note-add-row') : null;
+  delete openChildNoteAdds[key];
+  _columnScopedToggleTab = tab;
+  if (row && document.body.contains(row)) {
+    row.classList.add('note-add-row-exit');
+    setTimeout(function() { render(); }, 220);
+  } else {
+    render();
+  }
+}
+
+function getChildNoteAddKey(taskId, parentNoteId) {
+  return String(taskId || '') + ':' + String(parentNoteId || '');
+}
+
+function openChildNoteAdd(evt, tab, taskId, parentNoteId) {
+  if (evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
+  }
+  if (!tab || !taskId || !parentNoteId) return;
+  openChildNoteAdds[getChildNoteAddKey(taskId, parentNoteId)] = true;
+  _columnScopedToggleTab = tab;
+  render();
+  requestAnimationFrame(function() {
+    var input = document.getElementById('note-add-child-' + taskId + '-' + parentNoteId);
+    if (input) input.focus();
+  });
+}
+
+function submitChildNoteAdd(tab, taskId, parentNoteId, inputEl) {
+  if (!inputEl || inputEl._submitHandled) return;
+  var text = (inputEl.value || '').trim();
+  if (!text) return;
+  inputEl._submitHandled = true;
+  addChildNoteItem(tab, taskId, parentNoteId, text, true);
+  openChildNoteAdds[getChildNoteAddKey(taskId, parentNoteId)] = true;
+  _columnScopedToggleTab = tab;
+  render();
+  requestAnimationFrame(function() {
+    var nextInput = document.getElementById('note-add-child-' + taskId + '-' + parentNoteId);
+    if (!nextInput) return;
+    nextInput.value = '';
+    nextInput.focus();
+    if (typeof nextInput.setSelectionRange === 'function') nextInput.setSelectionRange(0, 0);
+  });
+}
+
+function markTaskDeleteIntent(taskId) {
+  if (!taskId) return;
+  deleteIntentTasks[taskId] = true;
+  setTimeout(function() {
+    if (deleteIntentTasks[taskId] === true) deleteIntentTasks[taskId] = false;
+  }, 360);
+}
+
+function markParentNoteDeleteIntent(taskId, noteId) {
+  if (!taskId || !noteId) return;
+  var key = getChildNoteAddKey(taskId, noteId);
+  deleteIntentParentNotes[key] = true;
+  setTimeout(function() {
+    if (deleteIntentParentNotes[key] === true) deleteIntentParentNotes[key] = false;
+  }, 360);
+}
+
 function triggerTaskDashboardEntrance() {
   var dashboard = document.querySelector('#panel-task-manager .dashboard');
   if (!dashboard) return;
@@ -1997,11 +2245,12 @@ function triggerTaskDashboardEntrance() {
         panel.classList.remove('category-headers-pre-enter');
         panel.classList.add('category-headers-enter');
         _categoryHeaderEntranceTimer = setTimeout(function() {
-          panel.classList.remove('category-headers-enter');
-          _categoryHeaderEntranceTimer = null;
-        }, 1020);
-      }, 0);
-    }
+        panel.classList.remove('category-headers-enter');
+        _categoryHeaderEntranceTimer = null;
+        syncTaskCardAvailableHeight();
+      }, 1020);
+    }, 0);
+  }
     if (_pendingDonutAnimation && _pendingDonutAnimation.fillEl) {
       var fillEl = _pendingDonutAnimation.fillEl;
       var pct = _pendingDonutAnimation.pct;
