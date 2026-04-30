@@ -861,11 +861,28 @@ function selectPriority(pri) {
   render();
 }
 
+function reconcileTodayProgressSnapshotForDueDate(task) {
+  if (!task || !task.id) return;
+  var snapshot = getTodayProgressSnapshot();
+  var today = todayISO();
+  if (!snapshot || snapshot.date !== today || !Array.isArray(snapshot.overdueIds)) return;
+  var taskId = String(task.id);
+  if (snapshot.overdueIds.indexOf(taskId) === -1) return;
+  var due = task.dueDate || null;
+  var stillQualifiesForToday = !!due && (due === today || due < today);
+  if (stillQualifiesForToday) return;
+  snapshot.overdueIds = snapshot.overdueIds.filter(function(id) {
+    return String(id) !== taskId;
+  });
+  saveTodayProgressSnapshot(snapshot);
+}
+
 function saveDueDate(tab, id, val) {
   var data = getData();
   var t = find(data[tab], id);
   if (t) t.dueDate = val || null;
   saveData(data);
+  reconcileTodayProgressSnapshotForDueDate(t);
   _columnScopedToggleTab = tab;
   render();
 }
@@ -1135,13 +1152,40 @@ function toggleNoteItem(tab, taskId, noteId) {
   var data = getData();
   var t = find(data[tab], taskId);
   if (!t) return;
-  var note = (t.noteItems||[]).find(function(n){ return n.id===noteId; });
+  var noteItems = t.noteItems || [];
+  var note = noteItems.find(function(n){ return n.id===noteId; });
   if (!note) return;
   _noteToggleRenderTab = tab;
   note.done = !note.done;
-  var allNotesDone = (t.noteItems||[]).length > 0 && (t.noteItems||[]).every(function(n){ return n.done; });
+
+  function findNoteById(id) {
+    return noteItems.find(function(n) { return n.id === id; });
+  }
+
+  function setDescendantsDone(parentId, isDone) {
+    getChildNotes(noteItems, parentId).forEach(function(childNote) {
+      childNote.done = isDone;
+      setDescendantsDone(childNote.id, isDone);
+    });
+  }
+
+  function reconcileAncestorCompletion(parentId) {
+    if (!parentId) return;
+    var parentNote = findNoteById(parentId);
+    if (!parentNote) return;
+    var childNotes = getChildNotes(noteItems, parentId);
+    if (childNotes.length) {
+      parentNote.done = childNotes.every(function(childNote) { return childNote.done; });
+    }
+    reconcileAncestorCompletion(parentNote.parentNoteId);
+  }
+
+  setDescendantsDone(note.id, note.done);
+  reconcileAncestorCompletion(note.parentNoteId);
+
+  var allNotesDone = noteItems.length > 0 && noteItems.every(function(n){ return n.done; });
   var shouldAutoCompleteTask = note.done && allNotesDone && !t.done;
-  var shouldReopenTask = !note.done && t.done && (t.noteItems||[]).length > 0;
+  var shouldReopenTask = !allNotesDone && t.done && noteItems.length > 0;
   if (shouldAutoCompleteTask) {
     t.done = true;
     t.completedAt = nextCompletionStamp();
@@ -1150,7 +1194,7 @@ function toggleNoteItem(tab, taskId, noteId) {
     t.done = false;
     t.completedAt = null;
   }
-  t.noteItems = sortedNotes(t.noteItems || []);
+  t.noteItems = sortedNotes(noteItems);
   if (shouldAutoCompleteTask || shouldReopenTask) {
     data[tab] = sortedTasks(data[tab] || []);
   }
@@ -1818,7 +1862,14 @@ function renderColumn(data, tab) {
   var animated = {};
   var maxFlipMs = 0;
   var completeAnimation = null;
-  var suppressTaskFlipForNoteToggle = !!noteToggleForTab;
+  var suppressTaskFlipForNoteToggle = !!(
+    noteToggleForTab &&
+    !(
+      pendingTaskComplete &&
+      pendingTaskComplete.tab === tab &&
+      pendingTaskComplete.id === noteToggleForTab.taskId
+    )
+  );
   if (
     suppressTaskFlipForNoteToggle ||
     (_columnScopedToggleTab && _columnScopedToggleTab !== tab) ||
