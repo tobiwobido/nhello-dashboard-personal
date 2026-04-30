@@ -1,5 +1,7 @@
 var TM_KEY = 'taskmanager_v2';
 var TODAY_PROGRESS_SNAPSHOT_KEY = TM_KEY + '_today_progress_snapshot_v1';
+var CATEGORY_LABELS_KEY = TM_KEY + '_category_labels_v1';
+var DEFAULT_CATEGORY_LABELS = { life: 'Life', work: 'Work', pd: 'Projects' };
 var openNotes = {};
 var priDropState = { tab: null, taskId: null };
 var _donutAnimated = false;
@@ -203,6 +205,48 @@ function saveTodayProgressSnapshot(snapshot) {
   try {
     localStorage.setItem(TODAY_PROGRESS_SNAPSHOT_KEY, JSON.stringify(snapshot));
   } catch(e) {}
+}
+
+function getCategoryLabels() {
+  try {
+    var raw = JSON.parse(localStorage.getItem(CATEGORY_LABELS_KEY) || 'null');
+    raw = raw && typeof raw === 'object' ? raw : {};
+    return {
+      life: typeof raw.life === 'string' && raw.life.trim() ? raw.life.trim() : DEFAULT_CATEGORY_LABELS.life,
+      work: typeof raw.work === 'string' && raw.work.trim() ? raw.work.trim() : DEFAULT_CATEGORY_LABELS.work,
+      pd: typeof raw.pd === 'string' && raw.pd.trim() ? raw.pd.trim() : DEFAULT_CATEGORY_LABELS.pd
+    };
+  } catch(e) {
+    return {
+      life: DEFAULT_CATEGORY_LABELS.life,
+      work: DEFAULT_CATEGORY_LABELS.work,
+      pd: DEFAULT_CATEGORY_LABELS.pd
+    };
+  }
+}
+
+function getCategoryLabel(tab) {
+  var labels = getCategoryLabels();
+  return labels[tab] || DEFAULT_CATEGORY_LABELS[tab] || '';
+}
+
+function saveCategoryLabel(tab, text) {
+  if (!DEFAULT_CATEGORY_LABELS[tab]) return;
+  var nextText = String(text || '').trim();
+  if (!nextText) return;
+  var labels = getCategoryLabels();
+  labels[tab] = nextText;
+  try {
+    localStorage.setItem(CATEGORY_LABELS_KEY, JSON.stringify(labels));
+  } catch(e) {}
+}
+
+function applyCategoryTitleLabels() {
+  ['life','work','pd'].forEach(function(tab) {
+    var el = document.getElementById('col-title-text-' + tab);
+    if (!el || el.dataset.editing === '1') return;
+    el.textContent = getCategoryLabel(tab);
+  });
 }
 // ── Undo stack ────────────────────────────────────────────────────────────────
 
@@ -810,6 +854,71 @@ function saveTitle(tab, id, val) {
   render();
 }
 
+function focusCategoryTitleAtEnd(el) {
+  if (!el) return;
+  var range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  var selection = window.getSelection();
+  if (!selection) return;
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function startCategoryTitleEdit(tab) {
+  var el = document.getElementById('col-title-text-' + tab);
+  if (!el || el.dataset.editing === '1') return;
+  el.dataset.editing = '1';
+  el.dataset.originalValue = getCategoryLabel(tab);
+  el.classList.add('is-editing');
+  el.setAttribute('contenteditable', 'true');
+  el.focus();
+  focusCategoryTitleAtEnd(el);
+}
+
+function finishCategoryTitleEdit(tab, shouldSave) {
+  var el = document.getElementById('col-title-text-' + tab);
+  if (!el || el.dataset.editing !== '1') return;
+  var originalValue = el.dataset.originalValue || getCategoryLabel(tab);
+  var nextValue = String(el.textContent || '').trim();
+  el.removeAttribute('contenteditable');
+  el.classList.remove('is-editing');
+  el.dataset.editing = '0';
+  delete el.dataset.originalValue;
+  if (shouldSave && nextValue) {
+    saveCategoryLabel(tab, nextValue);
+    el.textContent = getCategoryLabel(tab);
+    return;
+  }
+  el.textContent = originalValue || DEFAULT_CATEGORY_LABELS[tab] || '';
+}
+
+function handleCategoryTitleKeydown(e, tab) {
+  var el = document.getElementById('col-title-text-' + tab);
+  if (!el) return;
+  if (el.dataset.editing !== '1') {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      startCategoryTitleEdit(tab);
+    }
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    el.blur();
+    return;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    finishCategoryTitleEdit(tab, false);
+    el.blur();
+  }
+}
+
+function handleCategoryTitleBlur(tab) {
+  finishCategoryTitleEdit(tab, true);
+}
+
 function buildPriDropDOM() {
   if (document.getElementById('pri-drop')) return;
   var el = document.createElement('div');
@@ -867,10 +976,16 @@ function reconcileTodayProgressSnapshotForDueDate(task) {
   var today = todayISO();
   if (!snapshot || snapshot.date !== today || !Array.isArray(snapshot.overdueIds)) return;
   var taskId = String(task.id);
-  if (snapshot.overdueIds.indexOf(taskId) === -1) return;
   var due = task.dueDate || null;
-  var stillQualifiesForToday = !!due && (due === today || due < today);
-  if (stillQualifiesForToday) return;
+  var isOverdueForToday = !!due && due < today;
+  var existingIndex = snapshot.overdueIds.indexOf(taskId);
+  if (isOverdueForToday) {
+    if (existingIndex !== -1) return;
+    snapshot.overdueIds = snapshot.overdueIds.concat(taskId);
+    saveTodayProgressSnapshot(snapshot);
+    return;
+  }
+  if (existingIndex === -1) return;
   snapshot.overdueIds = snapshot.overdueIds.filter(function(id) {
     return String(id) !== taskId;
   });
@@ -1608,6 +1723,7 @@ function render() {
   });
   if (!_freezeTaskAvailableHeightSync && !_noteToggleRenderTab && !_undoRedoScopedTabs) syncTaskCardAvailableHeight();
   var data = getData();
+  applyCategoryTitleLabels();
   renderDashboard(data);
   renderTabs.forEach(function(tab){ renderColumn(data, tab); });
   if (_noteToggleRenderTab) {

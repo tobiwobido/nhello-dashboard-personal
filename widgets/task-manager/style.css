@@ -991,6 +991,18 @@ body:not(.dashboard-topbar-preview-v2) .dashboard.dashboard-enter .dashboard-sta
   font-weight: 700;
   flex: 0 0 auto;
 }
+.col-title-text {
+  min-width: 0;
+  cursor: text;
+  outline: none;
+  border-radius: 6px;
+}
+.col-title-text.is-editing {
+  padding: 1px 6px;
+  margin: -1px -6px;
+  background: rgba(255,255,255,0.08);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.16);
+}
 .col-title-icon {
   width: 18px;
   height: 18px;
