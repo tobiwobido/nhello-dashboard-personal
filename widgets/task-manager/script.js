@@ -4,6 +4,7 @@ var CATEGORY_LABELS_KEY = TM_KEY + '_category_labels_v1';
 var DEFAULT_CATEGORY_LABELS = { life: 'Life', work: 'Work', pd: 'Projects' };
 var openNotes = {};
 var priDropState = { tab: null, taskId: null };
+var repeatDropState = { mode: null, tab: null, taskId: null, triggerEl: null };
 var _donutAnimated = false;
 var _pendingDonutAnimation = null;
 var activeFilter = 'all';
@@ -22,6 +23,9 @@ var _filterEnterTimer = null;
 var _filterEnterCleanupMs = 380;
 var _filterNoMotionCols = null;
 var _freezeTaskAvailableHeightSync = false;
+var _isTaskDashboardBooting = true;
+var _taskDashboardEntranceInProgress = true;
+var _lastTaskAvailableHeight = null;
 var _columnScopedToggleTab = null;
 var _noteToggleRenderTab = null;
 var _pendingFlipReleases = null;
@@ -50,7 +54,7 @@ function shouldCancelTaskDragStart(evt) {
   var handle = target.closest('.task-drag-handle');
   if (!handle) return true;
   var blockedInteractive = target.closest(
-    'textarea,input,button,select,.cb-wrap,.note-text-input,.note-add-input,.note-add-btn,.note-del,.notes-icon-btn,.cal-icon-btn,.date-chip,.del-x,.pri-badge'
+    'textarea,input,button,select,.cb-wrap,.note-text-input,.note-add-input,.note-add-btn,.note-del,.notes-icon-btn,.cal-icon-btn,.repeat-icon-btn,.date-chip,.del-x,.pri-badge'
   );
   if (blockedInteractive && !blockedInteractive.classList.contains('task-drag-handle')) return true;
   return false;
@@ -161,8 +165,186 @@ function bindTaskColumnDropZone(container) {
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
 
 var ICON_CAL  = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3" width="13" height="11.5" rx="1.5"/><path d="M5 1.5V4M11 1.5V4M1.5 7h13"/></svg>';
-var ICON_NOTE = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="1.5" width="11" height="13" rx="1.5"/><path d="M5 5.5h6M5 8.5h6M5 11.5h3.5"/></svg>';
+var ICON_NOTE = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1.5" width="12" height="13" rx="1.5"/><path d="M4.5 5.5h7M4.5 8.5h7M4.5 11.5h4"/></svg>';
+var ICON_REPEAT = '<svg width="13" height="13" viewBox="2 2 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 5.25v5h-5"/><path d="M3 18.75v-5h5"/><path d="M3.6 9.25a8.8 8.8 0 0 1 14.37-2.99L21 9.25"/><path d="M20.4 14.75a8.8 8.8 0 0 1-14.37 2.99L3 14.75"/></svg>';
 var ICON_CLOSE = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 2L8 8M8 2L2 8"/></svg>';
+var REPEAT_FREQUENCIES = ['daily', 'weekly', 'monthly'];
+var REPEAT_FREQUENCY_SET = REPEAT_FREQUENCIES.reduce(function(acc, freq) {
+  acc[freq] = true;
+  return acc;
+}, {});
+var REPEAT_FREQUENCY_LABELS = {
+  daily: 'Daily',
+  weekly: 'Weekly',
+  monthly: 'Monthly'
+};
+
+function normalizeRepeatFrequency(value) {
+  return (typeof value === 'string' && REPEAT_FREQUENCY_SET[value]) ? value : null;
+}
+
+function normalizeRepeatCompletedForDueDate(value) {
+  return (typeof value === 'string' && value.trim()) ? value.trim() : null;
+}
+
+function isRepeatActive(task) {
+  return !!normalizeRepeatFrequency(task && task.repeatFrequency);
+}
+
+function getRepeatFrequencyLabel(freq) {
+  return REPEAT_FREQUENCY_LABELS[normalizeRepeatFrequency(freq)] || '';
+}
+
+function normalizeISODate(raw) {
+  if (!raw) return null;
+  var s = String(raw).trim();
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  var y = +m[1], mo = +m[2], d = +m[3];
+  var dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+}
+
+function compareISODate(a, b) {
+  var na = normalizeISODate(a);
+  var nb = normalizeISODate(b);
+  if (!na && !nb) return 0;
+  if (!na) return -1;
+  if (!nb) return 1;
+  if (na === nb) return 0;
+  return na < nb ? -1 : 1;
+}
+
+function addDaysISO(iso, days) {
+  var normalized = normalizeISODate(iso);
+  if (!normalized) return null;
+  var parts = normalized.split('-');
+  var dt = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+  dt.setDate(dt.getDate() + days);
+  return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+}
+
+function addWeeksISO(iso, weeks) {
+  return addDaysISO(iso, weeks * 7);
+}
+
+function addMonthsISO(iso, months) {
+  var normalized = normalizeISODate(iso);
+  if (!normalized) return null;
+  var parts = normalized.split('-');
+  var year = +parts[0];
+  var monthIndex = (+parts[1] - 1) + months;
+  var day = +parts[2];
+  var targetYear = year + Math.floor(monthIndex / 12);
+  var targetMonth = monthIndex % 12;
+  if (targetMonth < 0) {
+    targetMonth += 12;
+    targetYear -= 1;
+  }
+  var lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  var clampedDay = Math.min(day, lastDay);
+  var dt = new Date(targetYear, targetMonth, clampedDay);
+  return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+}
+
+function clearRepeatOccurrenceCompletion(task) {
+  if (!task) return;
+  task.repeatCompletedForDueDate = null;
+  task.done = false;
+  task.completedAt = null;
+}
+
+function setTaskCompletionState(task, isDone) {
+  if (!task) return;
+  var repeatFrequency = normalizeRepeatFrequency(task.repeatFrequency);
+  var dueDate = normalizeISODate(task.dueDate);
+  if (repeatFrequency && dueDate) {
+    task.dueDate = dueDate;
+    if (isDone) {
+      task.repeatCompletedForDueDate = dueDate;
+      task.done = true;
+      task.completedAt = nextCompletionStamp();
+      return;
+    }
+    clearRepeatOccurrenceCompletion(task);
+    return;
+  }
+  task.done = !!isDone;
+  task.completedAt = isDone ? nextCompletionStamp() : null;
+}
+
+function applyRepeatFrequencyToTask(task, nextFrequency) {
+  if (!task) return false;
+  var normalizedNext = normalizeRepeatFrequency(nextFrequency);
+  var currentFrequency = normalizeRepeatFrequency(task.repeatFrequency);
+  if (normalizedNext === null) {
+    task.repeatFrequency = null;
+    task.repeat = false;
+    task.repeatCompletedForDueDate = null;
+    return true;
+  }
+  var dueDate = normalizeISODate(task.dueDate);
+  if (!dueDate) return false;
+  if (currentFrequency === normalizedNext) return true;
+  task.dueDate = dueDate;
+  task.repeatFrequency = normalizedNext;
+  task.repeat = true;
+  task.repeatCompletedForDueDate = null;
+  task.done = false;
+  task.completedAt = null;
+  return true;
+}
+
+function reconcileRepeatTask(task, today) {
+  if (!task) return;
+  task.repeatFrequency = normalizeRepeatFrequency(task.repeatFrequency);
+  task.repeatCompletedForDueDate = normalizeRepeatCompletedForDueDate(task.repeatCompletedForDueDate);
+  if (!task.repeatFrequency) return;
+  var dueDate = normalizeISODate(task.dueDate);
+  if (!dueDate) {
+    task.repeatCompletedForDueDate = null;
+    task.done = false;
+    task.completedAt = null;
+    return;
+  }
+  task.dueDate = dueDate;
+  var originalDueDate = dueDate;
+  if (task.repeatFrequency === 'daily') {
+    while (compareISODate(task.dueDate, today) < 0) {
+      task.dueDate = addDaysISO(task.dueDate, 1);
+    }
+  } else if (task.repeatFrequency === 'weekly') {
+    while (compareISODate(task.dueDate, today) < 0) {
+      task.dueDate = addWeeksISO(task.dueDate, 1);
+    }
+  } else if (task.repeatFrequency === 'monthly') {
+    var completedForCurrentDueDate = task.repeatCompletedForDueDate === task.dueDate;
+    if (completedForCurrentDueDate) {
+      while (compareISODate(task.dueDate, today) < 0) {
+        var nextOccurrence = addMonthsISO(task.dueDate, 1);
+        var threshold = addDaysISO(nextOccurrence, -7);
+        if (compareISODate(today, threshold) < 0) break;
+        task.dueDate = nextOccurrence;
+      }
+    }
+  }
+  if (task.dueDate !== originalDueDate) {
+    clearRepeatOccurrenceCompletion(task);
+    return;
+  }
+  task.done = task.repeatCompletedForDueDate === task.dueDate;
+  if (!task.done) task.completedAt = null;
+}
+
+function reconcileRepeatTasks(data) {
+  var today = todayISO();
+  ['life','work','pd'].forEach(function(tab) {
+    (data[tab] || []).forEach(function(task) {
+      reconcileRepeatTask(task, today);
+    });
+  });
+}
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -176,9 +358,13 @@ function getData() {
             ? [{ id: genId(), text: task.notes.trim(), done: false, parentNoteId: null }]
             : [];
         }
+        task.repeatFrequency = normalizeRepeatFrequency(task.repeatFrequency);
+        task.repeatCompletedForDueDate = normalizeRepeatCompletedForDueDate(task.repeatCompletedForDueDate);
+        task.repeat = !!task.repeat;
         task.noteItems = normalizeNoteItems(task.noteItems);
       });
     });
+    reconcileRepeatTasks(d);
     return d;
   } catch(e) { return { life:[], work:[], pd:[] }; }
 }
@@ -485,6 +671,7 @@ function todayISO() {
     + String(d.getMonth()+1).padStart(2,'0') + '-'
     + String(d.getDate()).padStart(2,'0');
 }
+
 function fmtISO(iso) {
   if (!iso) return '';
   var p = iso.split('-');
@@ -604,6 +791,9 @@ function migrateIfNeeded() {
       (data[tab]||[]).forEach(function(task) {
         task.priority  = task.priority || 'medium';
         task.dueDate   = task.dueDate  || null;
+        task.repeatFrequency = normalizeRepeatFrequency(task.repeatFrequency);
+        task.repeatCompletedForDueDate = normalizeRepeatCompletedForDueDate(task.repeatCompletedForDueDate);
+        task.repeat    = !!task.repeat;
         if (task.done && typeof task.completedAt !== 'number') task.completedAt = 0;
         task.noteItems = (task.notes && task.notes.trim())
           ? [{ id: genId(), text: task.notes.trim(), done: false, parentNoteId: null }]
@@ -618,7 +808,7 @@ function migrateIfNeeded() {
 
 // ── Task operations ───────────────────────────────────────────────────────────
 
-function createTaskFromInputs(tab, text, priority, addBtn, dueDate) {
+function createTaskFromInputs(tab, text, priority, addBtn, dueDate, repeatFrequency) {
   if (addBtn) {
     clearTimeout(addBtn._confirmTimer);
     addBtn.classList.remove('is-confirmed');
@@ -630,9 +820,15 @@ function createTaskFromInputs(tab, text, priority, addBtn, dueDate) {
   }
   var data = getData();
   if (!data[tab]) data[tab] = [];
+  var normalizedRepeatFrequency = normalizeRepeatFrequency(repeatFrequency);
   var newTask = {
     id: genId(), text: text, done: false,
-    priority: priority || 'medium', dueDate: dueDate || null, noteItems: [],
+    priority: priority || 'medium',
+    dueDate: dueDate || null,
+    repeat: !!normalizedRepeatFrequency,
+    repeatFrequency: normalizedRepeatFrequency,
+    repeatCompletedForDueDate: null,
+    noteItems: [],
     children: []
   };
   data[tab].push(newTask);
@@ -672,20 +868,29 @@ function addTaskFromDashboardPreview() {
     text,
     priority ? (priority.value || 'medium') : 'medium',
     addBtn,
-    composerDueDate
+    composerDueDate,
+    composerRepeatFrequency
   );
   composerDueDate = null;
+  composerRepeatFrequency = null;
   syncComposerDateTriggerUI();
+  syncComposerRepeatTriggerUI();
   input.value = '';
   if (priority) priority.value = 'medium';
 }
 
+function toggleTaskRepeat(tab, id, triggerEl) {
+  openTaskRepeatDropdown(tab, id, triggerEl);
+}
+
 function toggleTask(tab, id) {
   _columnScopedToggleTab = tab;
+  _noteToggleRenderTab = tab;
   var data = getData();
   var t = find(data[tab], id);
   if (!t) return;
-  t.done = !t.done;
+  var nextDone = !t.done;
+  setTaskCompletionState(t, nextDone);
   if (t.done && Array.isArray(t.noteItems) && t.noteItems.length) {
     pendingTaskNoteCompletes = {
       tab: tab,
@@ -701,7 +906,6 @@ function toggleTask(tab, id) {
     t.noteItems = sortedNotes(t.noteItems);
   }
   data[tab] = sortedTasks(data[tab] || []);
-  t.completedAt = t.done ? nextCompletionStamp() : null;
   saveData(data);
   if (t.done) {
     pendingTaskComplete = { tab: tab, id: id };
@@ -970,6 +1174,164 @@ function selectPriority(pri) {
   render();
 }
 
+function closeRepeatDrop() {
+  var drop = document.getElementById('repeat-drop');
+  if (drop) drop.style.display = 'none';
+  repeatDropState.mode = null;
+  repeatDropState.tab = null;
+  repeatDropState.taskId = null;
+  repeatDropState.triggerEl = null;
+}
+
+function buildRepeatDropDOM() {
+  if (document.getElementById('repeat-drop')) return;
+  var el = document.createElement('div');
+  el.id = 'repeat-drop';
+  el.style.cssText = 'display:none;position:fixed;z-index:9998;';
+  document.body.appendChild(el);
+  document.addEventListener('mousedown', function(e) {
+    var d = document.getElementById('repeat-drop');
+    if (!d || d.style.display === 'none') return;
+    if (!d.contains(e.target)
+        && !e.target.closest('.repeat-icon-btn')
+        && !e.target.closest('.dashboard-add-repeat-trigger')) closeRepeatDrop();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeRepeatDrop();
+  });
+}
+
+function getRepeatDropdownContext() {
+  if (repeatDropState.mode === 'composer') {
+    return {
+      frequency: normalizeRepeatFrequency(composerRepeatFrequency),
+      dueDate: normalizeISODate(composerDueDate)
+    };
+  }
+  var data = getData();
+  var task = repeatDropState.tab ? find(data[repeatDropState.tab], repeatDropState.taskId) : null;
+  return {
+    task: task,
+    frequency: normalizeRepeatFrequency(task && task.repeatFrequency),
+    dueDate: normalizeISODate(task && task.dueDate)
+  };
+}
+
+function renderRepeatDropContents() {
+  var drop = document.getElementById('repeat-drop');
+  if (!drop) return;
+  var context = getRepeatDropdownContext();
+  var currentFrequency = context.frequency;
+  var hasDueDate = !!context.dueDate;
+  var options = [{ value: '', label: 'Off' }].concat(REPEAT_FREQUENCIES.map(function(freq) {
+    return { value: freq, label: getRepeatFrequencyLabel(freq) };
+  }));
+  var html = '<div class="repeat-drop-popup">';
+  options.forEach(function(option) {
+    var optionFrequency = normalizeRepeatFrequency(option.value);
+    var isSelected = optionFrequency === currentFrequency || (!optionFrequency && currentFrequency === null);
+    var isDisabled = !!optionFrequency && !hasDueDate;
+    html += '<button type="button" class="repeat-drop-item'
+      + (isSelected ? ' is-selected' : '')
+      + (isDisabled ? ' is-disabled' : '')
+      + '"'
+      + (isDisabled ? ' disabled' : '')
+      + ' onclick="selectRepeatFrequency(\'' + option.value + '\')">'
+      + option.label
+      + '</button>';
+  });
+  if (!hasDueDate) {
+    html += '<div class="repeat-drop-hint">Set a due date first</div>';
+  }
+  html += '</div>';
+  drop.innerHTML = html;
+}
+
+function positionRepeatDrop(triggerEl) {
+  var drop = document.getElementById('repeat-drop');
+  if (!drop || !triggerEl) return;
+  var popup = drop.querySelector('.repeat-drop-popup');
+  var pw = popup ? popup.offsetWidth : 132, ph = popup ? popup.offsetHeight : 160;
+  var rect = triggerEl.getBoundingClientRect();
+  var left = rect.left, top = rect.bottom + 4;
+  var vw = window.innerWidth, vh = window.innerHeight;
+  if (left + pw > vw - 8) left = vw - pw - 8;
+  if (top + ph > vh - 8) top = rect.top - ph - 4;
+  if (left < 8) left = 8;
+  if (top < 8) top = 8;
+  drop.style.left = left + 'px';
+  drop.style.top = top + 'px';
+}
+
+function openTaskRepeatDropdown(tab, taskId, triggerEl) {
+  buildRepeatDropDOM();
+  var drop = document.getElementById('repeat-drop');
+  if (drop.style.display !== 'none'
+      && repeatDropState.mode === 'task'
+      && repeatDropState.tab === tab
+      && repeatDropState.taskId === taskId) {
+    closeRepeatDrop();
+    return;
+  }
+  repeatDropState.mode = 'task';
+  repeatDropState.tab = tab;
+  repeatDropState.taskId = taskId;
+  repeatDropState.triggerEl = triggerEl || null;
+  renderRepeatDropContents();
+  drop.style.display = 'block';
+  positionRepeatDrop(triggerEl);
+}
+
+function openComposerRepeatDropdown(triggerEl) {
+  buildRepeatDropDOM();
+  var drop = document.getElementById('repeat-drop');
+  if (drop.style.display !== 'none' && repeatDropState.mode === 'composer') {
+    closeRepeatDrop();
+    return;
+  }
+  repeatDropState.mode = 'composer';
+  repeatDropState.tab = null;
+  repeatDropState.taskId = null;
+  repeatDropState.triggerEl = triggerEl || null;
+  renderRepeatDropContents();
+  drop.style.display = 'block';
+  positionRepeatDrop(triggerEl);
+}
+
+function selectRepeatFrequency(freq) {
+  var nextFrequency = normalizeRepeatFrequency(freq);
+  if (repeatDropState.mode === 'composer') {
+    if (nextFrequency && !normalizeISODate(composerDueDate)) {
+      renderRepeatDropContents();
+      return;
+    }
+    composerRepeatFrequency = nextFrequency;
+    syncComposerRepeatTriggerUI();
+    closeRepeatDrop();
+    return;
+  }
+  var data = getData();
+  var t = repeatDropState.tab ? find(data[repeatDropState.tab], repeatDropState.taskId) : null;
+  if (!t) {
+    closeRepeatDrop();
+    return;
+  }
+  if (nextFrequency && !normalizeISODate(t.dueDate)) {
+    renderRepeatDropContents();
+    return;
+  }
+  var changed = applyRepeatFrequencyToTask(t, nextFrequency);
+  if (!changed) {
+    renderRepeatDropContents();
+    return;
+  }
+  _columnScopedToggleTab = repeatDropState.tab;
+  saveData(data);
+  reconcileTodayProgressSnapshotForDueDate(t);
+  closeRepeatDrop();
+  render();
+}
+
 function reconcileTodayProgressSnapshotForDueDate(task) {
   if (!task || !task.id) return;
   var snapshot = getTodayProgressSnapshot();
@@ -995,7 +1357,12 @@ function reconcileTodayProgressSnapshotForDueDate(task) {
 function saveDueDate(tab, id, val) {
   var data = getData();
   var t = find(data[tab], id);
-  if (t) t.dueDate = val || null;
+  if (t) {
+    t.dueDate = val || null;
+    if (normalizeRepeatFrequency(t.repeatFrequency)) {
+      clearRepeatOccurrenceCompletion(t);
+    }
+  }
   saveData(data);
   reconcileTodayProgressSnapshotForDueDate(t);
   _columnScopedToggleTab = tab;
@@ -1005,12 +1372,14 @@ function saveDueDate(tab, id, val) {
 // ── Custom calendar ───────────────────────────────────────────────────────────
 
 var composerDueDate = null;
+var composerRepeatFrequency = null;
 var calState = { mode: 'task', tab: null, taskId: null, year: 0, month: 0, selectedISO: null };
 var CAL_MONTHS = ['January','February','March','April','May','June','July',
                   'August','September','October','November','December'];
 var CAL_DAYS   = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
 function syncComposerDateTriggerUI() {
+  var wrap = document.querySelector('.dashboard-add-input-wrap');
   var trigger = document.getElementById('dashboard-add-date-trigger');
   if (!trigger) return;
   if (!trigger.dataset.iconMarkup) trigger.dataset.iconMarkup = trigger.innerHTML;
@@ -1019,8 +1388,47 @@ function syncComposerDateTriggerUI() {
     ? '<span class="dashboard-add-date-text">' + fmtISO(composerDueDate) + '</span>'
     : trigger.dataset.iconMarkup;
   trigger.classList.toggle('has-date', hasDate);
+  if (wrap) wrap.classList.toggle('has-date', hasDate);
   trigger.title = hasDate ? ('Due: ' + fmtISO(composerDueDate) + ' (click to change)') : 'Set due date';
   trigger.setAttribute('aria-label', hasDate ? ('Change due date (currently ' + fmtISO(composerDueDate) + ')') : 'Set due date');
+  syncComposerSuffixLayout();
+}
+
+function syncComposerRepeatTriggerUI() {
+  var trigger = document.getElementById('dashboard-add-repeat-trigger');
+  if (!trigger) return;
+  if (!trigger.dataset.iconMarkup) trigger.dataset.iconMarkup = ICON_REPEAT;
+  var currentFrequency = normalizeRepeatFrequency(composerRepeatFrequency);
+  var currentLabel = getRepeatFrequencyLabel(currentFrequency);
+  trigger.innerHTML = currentFrequency
+    ? '<span class="dashboard-add-repeat-text">' + currentLabel + '</span>'
+    : trigger.dataset.iconMarkup;
+  trigger.classList.toggle('has-frequency', !!currentFrequency);
+  trigger.classList.toggle('is-active', !!currentFrequency);
+  trigger.title = currentFrequency
+    ? ('Repeat: ' + currentLabel)
+    : (composerDueDate ? 'Set repeat schedule' : 'Set due date to enable repeat');
+  trigger.setAttribute('aria-label', currentFrequency
+    ? ('Change repeat frequency (currently ' + currentLabel + ')')
+    : (composerDueDate ? 'Set repeat frequency' : 'Set due date to enable repeat'));
+  syncComposerSuffixLayout();
+}
+
+function syncComposerSuffixLayout() {
+  var wrap = document.querySelector('.dashboard-add-input-wrap');
+  if (!wrap) return;
+  var dateTrigger = document.getElementById('dashboard-add-date-trigger');
+  var repeatTrigger = document.getElementById('dashboard-add-repeat-trigger');
+  if (!dateTrigger || !repeatTrigger) return;
+  var computed = window.getComputedStyle(wrap);
+  var repeatGap = parseFloat(computed.getPropertyValue('--dashboard-add-repeat-gap')) || 4;
+  var edgeInset = 11;
+  var inputSpacer = 10;
+  var repeatWidth = Math.ceil(repeatTrigger.offsetWidth || 14);
+  var dateWidth = Math.ceil(dateTrigger.offsetWidth || 14);
+  var suffixWidth = edgeInset + repeatWidth + repeatGap + dateWidth + inputSpacer;
+  wrap.style.setProperty('--dashboard-add-repeat-width', repeatWidth + 'px');
+  wrap.style.setProperty('--dashboard-add-trigger-reserve', suffixWidth + 'px');
 }
 
 function bindComposerCalendarTrigger() {
@@ -1031,6 +1439,16 @@ function bindComposerCalendarTrigger() {
     openComposerCustomCal(trigger);
   });
   syncComposerDateTriggerUI();
+}
+
+function bindComposerRepeatTrigger() {
+  var trigger = document.getElementById('dashboard-add-repeat-trigger');
+  if (!trigger || trigger._repeatBound) return;
+  trigger._repeatBound = true;
+  trigger.addEventListener('click', function() {
+    openComposerRepeatDropdown(trigger);
+  });
+  syncComposerRepeatTriggerUI();
 }
 
 function buildCalendarDOM() {
@@ -1302,12 +1720,10 @@ function toggleNoteItem(tab, taskId, noteId) {
   var shouldAutoCompleteTask = note.done && allNotesDone && !t.done;
   var shouldReopenTask = !allNotesDone && t.done && noteItems.length > 0;
   if (shouldAutoCompleteTask) {
-    t.done = true;
-    t.completedAt = nextCompletionStamp();
+    setTaskCompletionState(t, true);
   }
   if (shouldReopenTask) {
-    t.done = false;
-    t.completedAt = null;
+    setTaskCompletionState(t, false);
   }
   t.noteItems = sortedNotes(noteItems);
   if (shouldAutoCompleteTask || shouldReopenTask) {
@@ -1545,8 +1961,38 @@ function getReorderTransition(delta) {
 
 var TASK_FILTER_FLIP_THRESHOLD_PX = 2.5;
 
+function shouldHideMonthlyTask(task, today) {
+  if (!task) return false;
+  if (normalizeRepeatFrequency(task.repeatFrequency) !== 'monthly') return false;
+  var completedDueDate = normalizeISODate(task.repeatCompletedForDueDate);
+  if (!completedDueDate) return false;
+  var normalizedToday = normalizeISODate(today) || todayISO();
+  if (typeof task.completedAt === 'number' && task.completedAt > 0) {
+    var completedDate = new Date(task.completedAt);
+    var completedLocalISO = completedDate.getFullYear() + '-'
+      + String(completedDate.getMonth() + 1).padStart(2, '0') + '-'
+      + String(completedDate.getDate()).padStart(2, '0');
+    if (completedLocalISO === normalizedToday) return false;
+  }
+  var nextDueDate = addMonthsISO(completedDueDate, 1);
+  if (!nextDueDate) return false;
+  while (compareISODate(nextDueDate, normalizedToday) < 0) {
+    nextDueDate = addMonthsISO(nextDueDate, 1);
+    if (!nextDueDate) return false;
+  }
+  var threshold = addDaysISO(nextDueDate, -7);
+  if (!threshold) return false;
+  return compareISODate(normalizedToday, threshold) < 0;
+}
+
 function getDisplayTasksForFilter(tasks, filter) {
+  var today = todayISO();
   var displayTasks = sortedTasks(tasks || []);
+  if (filter !== 'done') {
+    displayTasks = displayTasks.filter(function(t) {
+      return !shouldHideMonthlyTask(t, today);
+    });
+  }
   if (filter === 'active') {
     displayTasks = displayTasks.filter(function(t){ return !t.done; });
   } else if (filter === 'done') {
@@ -1569,6 +2015,15 @@ function captureColumnHeights() {
 
 function animateColumnHeights(prevHeights, resizeMs) {
   if (!prevHeights || !prevHeights.length) return;
+  if (_isTaskDashboardBooting) {
+    prevHeights.forEach(function(item) {
+      if (!item.el) return;
+      item.el.style.transition = '';
+      item.el.style.height = '';
+      item.el.classList.remove('is-resizing');
+    });
+    return;
+  }
   if (_columnResizeTimer) {
     clearTimeout(_columnResizeTimer);
     _columnResizeTimer = null;
@@ -1621,7 +2076,8 @@ function getTransitionResizeDuration() {
   return Math.max(360, maxFlipMs);
 }
 
-function syncTaskCardAvailableHeight() {
+function syncTaskCardAvailableHeight(options) {
+  options = options || {};
   var panel = document.getElementById('panel-task-manager');
   if (!panel) return;
   var grid = panel.querySelector('.columns-grid');
@@ -1634,7 +2090,14 @@ function syncTaskCardAvailableHeight() {
   var bottomPadding = 16;
   var containerHeight = mainContent ? mainContent.clientHeight : window.innerHeight;
   var available = Math.max(0, Math.floor(containerHeight - relativeTop - panelBottomPadding - bottomPadding));
+  var preserveVisibleHeight = !!options.preserveVisibleHeight;
+  // Guardrail: during dashboard entrance boot, do not apply shrinking height updates.
+  // Late entrance animation timing can temporarily reduce measured space and cause visible column collapse.
+  if ((_taskDashboardEntranceInProgress || preserveVisibleHeight) && _lastTaskAvailableHeight !== null && available < _lastTaskAvailableHeight) {
+    return;
+  }
   panel.style.setProperty('--tasks-available-h', available + 'px');
+  _lastTaskAvailableHeight = available;
 }
 
 function setFilter(f) {
@@ -1869,13 +2332,24 @@ function renderColumn(data, tab) {
     var dueSubtitle = '';
     if (task.dueDate) {
       var dateClass = ovr ? ' overdue' : (tdy ? ' today' : ' future');
+      var dueRepeatLabel = getRepeatFrequencyLabel(task.repeatFrequency);
       dueSubtitle = '<div class="due-subtitle">'
-        + '<span class="date-chip" onclick="openCustomCal(\''+tab+'\',\''+task.id+'\',\''+escHtml(task.dueDate)+'\',this)" title="Change due date">'
+        + '<span class="date-chip">'
         + '<span class="due-text'+dateClass+'">'+fmtISO(task.dueDate)+'</span>'
+        + (dueRepeatLabel
+          ? '<span class="due-sep" aria-hidden="true"> - </span><span class="due-repeat-label">'+dueRepeatLabel+'</span>'
+          : '')
         + '</span></div>';
     }
     var calIconBtn = '<button class="cal-icon-btn" onclick="openCustomCal(\''+tab+'\',\''+task.id+'\',\''+escHtml(task.dueDate||'')+'\',this)" title="'+(task.dueDate?'Change due date':'Set due date')+'">'
       + ICON_CAL + '</button>';
+    var repeatIconActive = isRepeatActive(task);
+    var repeatFrequencyLabel = getRepeatFrequencyLabel(task.repeatFrequency);
+    var repeatIconTitle = repeatIconActive
+      ? ('Repeat: ' + repeatFrequencyLabel)
+      : (task.dueDate ? 'Set repeat schedule' : 'Set due date to enable repeat');
+    var repeatIconBtn = '<button class="repeat-icon-btn'+(repeatIconActive ? ' is-active' : '')+'" onclick="toggleTaskRepeat(\''+tab+'\',\''+task.id+'\',this)" title="'+repeatIconTitle+'">'
+      + ICON_REPEAT + '</button>';
 
     var noteItems = task.noteItems || [];
     var notesIconBtn = '<button class="notes-icon-btn" onclick="toggleNotes(\''+task.id+'\')" title="Add a note">'
@@ -1951,6 +2425,7 @@ function renderColumn(data, tab) {
       +       '<div class="task-actions">'
       +         notesIconBtn
       +         calIconBtn
+      +         repeatIconBtn
       +       '</div>'
       +       '<button class="pri-badge pri-'+pri+'" onclick="openPriDrop(\''+tab+'\',\''+task.id+'\',this)" title="Click to change priority">'+priLabel+'</button>'
       +     '</div>'
@@ -2141,7 +2616,9 @@ function renderDashboard(data) {
     };
   }
   bindComposerCalendarTrigger();
+  bindComposerRepeatTrigger();
   syncComposerDateTriggerUI();
+  syncComposerRepeatTriggerUI();
   var state = renderDashboard._progressViewState;
   var dashboardEl = document.querySelector('#panel-task-manager .dashboard');
   var donutWrapEl = dashboardEl && dashboardEl.querySelector('.dashboard-left');
@@ -2434,6 +2911,8 @@ function markParentNoteDeleteIntent(taskId, noteId) {
 function triggerTaskDashboardEntrance() {
   var dashboard = document.querySelector('#panel-task-manager .dashboard');
   if (!dashboard) return;
+  _taskDashboardEntranceInProgress = true;
+  _isTaskDashboardBooting = true;
   var panel = document.getElementById('panel-task-manager');
   var isPreviewTopbar = document.body.classList.contains('dashboard-topbar-preview-v2');
   dashboard.classList.remove('dashboard-enter');
@@ -2457,7 +2936,9 @@ function triggerTaskDashboardEntrance() {
         _categoryHeaderEntranceTimer = setTimeout(function() {
         panel.classList.remove('category-headers-enter');
         _categoryHeaderEntranceTimer = null;
-        syncTaskCardAvailableHeight();
+        syncTaskCardAvailableHeight({ preserveVisibleHeight: true });
+        _taskDashboardEntranceInProgress = false;
+        _isTaskDashboardBooting = false;
       }, 1020);
     }, 0);
   }
@@ -2523,3 +3004,7 @@ document.addEventListener('keydown', function(e) {
 migrateIfNeeded();
 applyInitialOrderingOnce();
 render();
+if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  _taskDashboardEntranceInProgress = false;
+  _isTaskDashboardBooting = false;
+}
