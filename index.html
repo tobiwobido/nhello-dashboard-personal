@@ -167,10 +167,19 @@
             <span class="filter-tab-count" id="cnt-done">0</span>
           </span>
         </button>
-        <button class="filter-clear-done" id="filter-clear-done" type="button" onclick="handleClearDoneClick()" aria-hidden="true">
-          <span class="filter-clear-label">Clear</span>
-          <span class="filter-clear-undo-label">Undo</span>
-          <span class="filter-clear-feedback">Cleared</span>
+        <span class="filter-clear-slot" id="filter-clear-slot">
+          <span class="filter-clear-divider" aria-hidden="true"></span>
+          <button class="filter-clear-done" id="filter-clear-done" type="button" onclick="handleClearDoneClick()" aria-hidden="true">
+            <span class="filter-clear-label">Clear</span>
+            <span class="filter-clear-undo-label">Undo</span>
+            <span class="filter-clear-feedback">Cleared</span>
+          </button>
+        </span>
+        <button class="filter-tab" data-filter="repeat" onclick="setFilter('repeat')">
+          <span class="filter-tab-inner">
+            <span>Repeat</span>
+            <span class="filter-tab-count" id="cnt-repeat">0</span>
+          </span>
         </button>
       </div>
 

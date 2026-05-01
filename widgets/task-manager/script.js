@@ -36,6 +36,8 @@ var FILTER_ENTER_ANIMATION_MS = 260;
 var FILTER_ENTER_DELAY_RATIO = 0.45;
 var FILTER_ENTER_DELAY_MAX_MS = 120;
 var FILTER_ENTER_CLEANUP_BUFFER_MS = 40;
+var CLEAR_FILTER_ANIMATION_MS = 340;
+var CLEAR_FILTER_COLLAPSE_DELAY_MS = 160;
 var taskColumnDragState = {
   activeDragTaskId: null,
   sourceTab: null,
@@ -163,7 +165,7 @@ function bindTaskColumnDropZone(container) {
 }
 
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
-var ICON_DRAG = '<svg class="task-drag-icon" viewBox="0 0 10 14" aria-hidden="true"><circle cx="2" cy="2" r="1.25" fill="currentColor"/><circle cx="8" cy="2" r="1.25" fill="currentColor"/><circle cx="2" cy="7" r="1.25" fill="currentColor"/><circle cx="8" cy="7" r="1.25" fill="currentColor"/><circle cx="2" cy="12" r="1.25" fill="currentColor"/><circle cx="8" cy="12" r="1.25" fill="currentColor"/></svg>';
+var ICON_DRAG = '<svg class="task-drag-icon" viewBox="0 0 10 14" aria-hidden="true"><circle cx="2" cy="2" r="1.05" fill="currentColor"/><circle cx="8" cy="2" r="1.05" fill="currentColor"/><circle cx="2" cy="7" r="1.05" fill="currentColor"/><circle cx="8" cy="7" r="1.05" fill="currentColor"/><circle cx="2" cy="12" r="1.05" fill="currentColor"/><circle cx="8" cy="12" r="1.05" fill="currentColor"/></svg>';
 
 var ICON_CAL  = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3" width="13" height="11.5" rx="1.5"/><path d="M5 1.5V4M11 1.5V4M1.5 7h13"/></svg>';
 var ICON_NOTE = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1.5" width="12" height="13" rx="1.5"/><path d="M4.5 5.5h7M4.5 8.5h7M4.5 11.5h4"/></svg>';
@@ -190,6 +192,10 @@ function normalizeRepeatCompletedForDueDate(value) {
 
 function isRepeatActive(task) {
   return !!normalizeRepeatFrequency(task && task.repeatFrequency);
+}
+
+function isClearableDoneTask(task) {
+  return !!(task && task.done && !isRepeatActive(task));
 }
 
 function getRepeatFrequencyLabel(freq) {
@@ -950,22 +956,22 @@ function deleteTask(tab, id, btn) {
 function clearDone(tab) {
   if (_clearDoneTimers[tab]) return;
   var data = getData();
-  if (!(data[tab]||[]).some(function(t){ return t.done; })) return;
+  if (!(data[tab]||[]).some(isClearableDoneTask)) return;
   var container = document.getElementById('tasks-' + tab);
   var exitingEls = [];
   if (container) {
     container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
       var task = find(data[tab], el.dataset.id);
-      if (task && task.done) {
+      if (isClearableDoneTask(task)) {
         el.classList.add('filter-exit');
         exitingEls.push(el);
       }
     });
   }
   if (!exitingEls.length) {
-    (data[tab]||[]).filter(function(t){ return t.done; })
+    (data[tab]||[]).filter(isClearableDoneTask)
       .forEach(function(t){ delete openNotes[t.id]; });
-    data[tab] = (data[tab]||[]).filter(function(t){ return !t.done; });
+    data[tab] = (data[tab]||[]).filter(function(t){ return !isClearableDoneTask(t); });
     saveData(data); render();
     return;
   }
@@ -973,9 +979,9 @@ function clearDone(tab) {
   _clearDoneTimers[tab] = setTimeout(function() {
     delete _clearDoneTimers[tab];
     var d = getData();
-    (d[tab]||[]).filter(function(t){ return t.done; })
+    (d[tab]||[]).filter(isClearableDoneTask)
       .forEach(function(t){ delete openNotes[t.id]; });
-    d[tab] = (d[tab]||[]).filter(function(t){ return !t.done; });
+    d[tab] = (d[tab]||[]).filter(function(t){ return !isClearableDoneTask(t); });
     saveData(d);
     render();
     animateColumnHeights(prevHeights);
@@ -986,7 +992,7 @@ function clearAllDone() {
   if (_clearAllDoneTimer) return;
   var data = getData();
   var hasDone = ['life','work','pd'].some(function(tab) {
-    return (data[tab]||[]).some(function(t){ return t.done; });
+    return (data[tab]||[]).some(isClearableDoneTask);
   });
   if (!hasDone) { showClearDoneFeedback(); return; }
   var exitingEls = [];
@@ -995,7 +1001,7 @@ function clearAllDone() {
     if (!container) return;
     container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
       var task = find(data[tab], el.dataset.id);
-      if (task && task.done) {
+      if (isClearableDoneTask(task)) {
         el.classList.add('filter-exit');
         exitingEls.push(el);
       }
@@ -1004,9 +1010,9 @@ function clearAllDone() {
   showClearDoneFeedback();
   if (!exitingEls.length) {
     ['life','work','pd'].forEach(function(tab) {
-      (data[tab]||[]).filter(function(t){ return t.done; })
+      (data[tab]||[]).filter(isClearableDoneTask)
         .forEach(function(t){ delete openNotes[t.id]; });
-      data[tab] = (data[tab]||[]).filter(function(t){ return !t.done; });
+      data[tab] = (data[tab]||[]).filter(function(t){ return !isClearableDoneTask(t); });
     });
     saveData(data); render();
     return;
@@ -1016,9 +1022,9 @@ function clearAllDone() {
     _clearAllDoneTimer = null;
     var d = getData();
     ['life','work','pd'].forEach(function(tab) {
-      (d[tab]||[]).filter(function(t){ return t.done; })
+      (d[tab]||[]).filter(isClearableDoneTask)
         .forEach(function(t){ delete openNotes[t.id]; });
-      d[tab] = (d[tab]||[]).filter(function(t){ return !t.done; });
+      d[tab] = (d[tab]||[]).filter(function(t){ return !isClearableDoneTask(t); });
     });
     saveData(d);
     render();
@@ -1998,6 +2004,8 @@ function getDisplayTasksForFilter(tasks, filter) {
     displayTasks = displayTasks.filter(function(t){ return !t.done; });
   } else if (filter === 'done') {
     displayTasks = displayTasks.filter(function(t){ return t.done; });
+  } else if (filter === 'repeat') {
+    displayTasks = displayTasks.filter(function(t){ return isRepeatActive(t); });
   }
   return displayTasks;
 }
@@ -2075,6 +2083,60 @@ function getTransitionResizeDuration() {
     maxFlipMs = Math.max(maxFlipMs, flipMs);
   });
   return Math.max(360, maxFlipMs);
+}
+
+function setClearSlotVisibility(showClear) {
+  var clearSlot = document.getElementById('filter-clear-slot');
+  if (!clearSlot) return;
+
+  var durationMs = CLEAR_FILTER_ANIMATION_MS;
+  var collapseDelayMs = CLEAR_FILTER_COLLAPSE_DELAY_MS;
+
+  clearSlot.style.setProperty('--clear-filter-duration', durationMs + 'ms');
+  clearSlot.style.setProperty('--clear-filter-collapse-delay', collapseDelayMs + 'ms');
+
+  clearTimeout(clearSlot._enterTimer);
+  clearTimeout(clearSlot._collapseTimer);
+  clearTimeout(clearSlot._exitTimer);
+  clearSlot._enterTimer = null;
+  clearSlot._collapseTimer = null;
+  clearSlot._exitTimer = null;
+
+  if (showClear) {
+    clearSlot.classList.remove('is-exiting');
+    clearSlot.classList.add('is-open');
+    clearSlot.classList.add('is-visible');
+    clearSlot.classList.add('is-entering');
+    clearSlot._enterTimer = setTimeout(function() {
+      clearSlot.classList.remove('is-entering');
+      clearSlot._enterTimer = null;
+    }, durationMs);
+    return;
+  }
+
+  if (
+    !clearSlot.classList.contains('is-open') &&
+    !clearSlot.classList.contains('is-visible') &&
+    !clearSlot.classList.contains('is-entering') &&
+    !clearSlot.classList.contains('is-exiting')
+  ) {
+    return;
+  }
+
+  clearSlot.classList.remove('is-entering');
+  clearSlot.classList.remove('is-visible');
+  clearSlot.classList.add('is-exiting');
+  clearSlot.classList.add('is-open');
+
+  clearSlot._collapseTimer = setTimeout(function() {
+    clearSlot.classList.remove('is-open');
+    clearSlot._collapseTimer = null;
+  }, collapseDelayMs);
+
+  clearSlot._exitTimer = setTimeout(function() {
+    clearSlot.classList.remove('is-exiting');
+    clearSlot._exitTimer = null;
+  }, collapseDelayMs + durationMs);
 }
 
 function syncTaskCardAvailableHeight(options) {
@@ -2162,7 +2224,7 @@ function setFilter(f) {
     activeFilter = f;
     render();
     animateColumnHeights(prevHeights, getTransitionResizeDuration());
-  }, 260);
+  }, FILTER_ENTER_ANIMATION_MS);
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -2233,7 +2295,8 @@ function render() {
       return (data[tab]||[]).some(function(t){ return t.done; });
     });
     var keepClearStateVisible = clearBtn.classList.contains('is-cleared') || clearBtn.classList.contains('is-undoing');
-    clearBtn.classList.toggle('is-visible', hasDone || keepClearStateVisible);
+    var showClear = hasDone || keepClearStateVisible;
+    setClearSlotVisibility(showClear);
     if (!clearBtn.classList.contains('is-cleared')) {
       if (!hasDone) {
         clearBtn.classList.remove('is-undoing', 'is-cleared');
@@ -2274,7 +2337,8 @@ function syncTaskManagerChrome() {
       return (data[tab]||[]).some(function(t){ return t.done; });
     });
     var keepClearStateVisible = clearBtn.classList.contains('is-cleared') || clearBtn.classList.contains('is-undoing');
-    clearBtn.classList.toggle('is-visible', hasDone || keepClearStateVisible);
+    var showClear = hasDone || keepClearStateVisible;
+    setClearSlotVisibility(showClear);
     if (!hasDone && !clearBtn.classList.contains('is-cleared')) {
       clearBtn.classList.remove('is-undoing', 'is-cleared');
     }
@@ -2303,6 +2367,7 @@ function renderColumn(data, tab) {
     if (pendingNoteToggle && pendingNoteToggle.tab === tab) pendingNoteToggle = null;
     var emptyMsg = activeFilter === 'done'   ? 'No completed tasks.'
                  : activeFilter === 'active' ? 'No active tasks.'
+                 : activeFilter === 'repeat' ? 'No repeating tasks.'
                  : 'No tasks yet.';
     container.innerHTML = '<p class="empty-state">' + emptyMsg + '</p>';
     return;
@@ -2782,6 +2847,7 @@ function renderDashboard(data) {
   el = document.getElementById('cnt-all');     if(el) el.textContent = allTasks.length;
   el = document.getElementById('cnt-active');  if(el) el.textContent = allOpen.length;
   el = document.getElementById('cnt-done');    if(el) el.textContent = allTasks.length - allOpen.length;
+  el = document.getElementById('cnt-repeat');  if(el) el.textContent = allTasks.filter(function(t){ return isRepeatActive(t); }).length;
   el = document.getElementById('cnt-overdue'); if(el) el.textContent = overdue;
   el = document.getElementById('cnt-today');   if(el) el.textContent = dueToday;
   el = document.getElementById('pill-overdue'); if(el) el.classList.toggle('dim', overdue === 0);
