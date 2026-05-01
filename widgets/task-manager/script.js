@@ -163,6 +163,7 @@ function bindTaskColumnDropZone(container) {
 }
 
 var CB_SVG = '<svg class="cb-svg" viewBox="0 0 22 22" fill="none"><circle class="cb-circle" cx="11" cy="11" r="9.5"/><polyline class="cb-check" points="6,11 9.5,14.5 16.5,7.5"/></svg>';
+var ICON_DRAG = '<svg class="task-drag-icon" viewBox="0 0 10 14" aria-hidden="true"><circle cx="2" cy="2" r="1.25" fill="currentColor"/><circle cx="8" cy="2" r="1.25" fill="currentColor"/><circle cx="2" cy="7" r="1.25" fill="currentColor"/><circle cx="8" cy="7" r="1.25" fill="currentColor"/><circle cx="2" cy="12" r="1.25" fill="currentColor"/><circle cx="8" cy="12" r="1.25" fill="currentColor"/></svg>';
 
 var ICON_CAL  = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="3" width="13" height="11.5" rx="1.5"/><path d="M5 1.5V4M11 1.5V4M1.5 7h13"/></svg>';
 var ICON_NOTE = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1.5" width="12" height="13" rx="1.5"/><path d="M4.5 5.5h7M4.5 8.5h7M4.5 11.5h4"/></svg>';
@@ -2406,7 +2407,7 @@ function renderColumn(data, tab) {
       : '';
 
     var dragHandle = '<span class="task-drag-handle" draggable="true" title="Drag task to another category" aria-label="Drag task" role="button"'
-      + ' ondragstart="handleTaskDragStart(event,\''+tab+'\',\''+task.id+'\')" ondragend="handleTaskDragEnd()">&#8942;&#8942;</span>';
+      + ' ondragstart="handleTaskDragStart(event,\''+tab+'\',\''+task.id+'\')" ondragend="handleTaskDragEnd()">' + ICON_DRAG + '</span>';
     return '<div class="task-group'+enterClass+'" data-id="'+task.id+'" draggable="false">'
       + '<div class="'+ic+'">'
       + '<button class="del-x" onmousedown="markTaskDeleteIntent(\''+task.id+'\')" onclick="deleteTask(\''+tab+'\',\''+task.id+'\',this)" title="Remove task">'+ICON_CLOSE+'</button>'
