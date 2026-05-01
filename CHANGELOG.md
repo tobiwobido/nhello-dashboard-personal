@@ -1,6 +1,27 @@
 # Changelog
 
-## 2026-04-29 â€” Filter Enter Sequencing Polish
+## 2026-04-30 — Repeat Filters, Clear Animation, and Task Manager UX Polish
+
+### Added
+- Repeat filter tab with live repeating-task counts
+- Editable category titles for Life, Work, and Projects with persisted labels
+- Geometric six-dot SVG drag handle for task cards
+
+### Changed
+- Reworked Done/Clear/Repeat pill layout so Clear and divider participate in real flex spacing and Repeat shifts naturally
+- Unified Clear enter/exit animation timing to a fixed duration for smoother, consistent behavior across filter transitions
+- Refined task-card vertical alignment so drag handle, checkbox, text stack, and controls align more consistently
+
+### Fixed
+- Fixed Done clear behavior so repeat-active completed tasks are preserved during bulk clear
+- Fixed Today progress snapshot reconciliation when due dates are edited, preventing stale progress calculations
+- Fixed Clear exit overlap against the Done/Clear divider by syncing divider fade with exit start
+- Fixed drag handle optical offset and oversized dot rendering after alignment updates
+- Fixed uneven filter pill spacing between Done, Clear, divider, and Repeat states
+
+---
+
+## 2026-04-29 — Filter Enter Sequencing Polish
 
 ### Changed
 - Smoothed filter enter sequencing so newly visible cards join the transition more naturally
@@ -9,7 +30,7 @@
 
 ---
 
-## 2026-04-29 â€” Filter Animation Consistency and Stability
+## 2026-04-29 — Filter Animation Consistency and Stability
 
 ### Added
 - Filter transitions now preserve shared task movement consistently across All, Active, and Done views
@@ -27,7 +48,7 @@
 
 ---
 
-## 2026-04-28 Ã¢â‚¬â€ UI Polish, Nested Notes, and Stability Fixes
+## 2026-04-28 — UI Polish, Nested Notes, and Stability Fixes
 
 ### Added
 - Nested notes (notes can now have child notes)
@@ -63,7 +84,7 @@
 
 ---
 
-## 2026-04-26 Ã¢â‚¬â€ Core Interaction Features
+## 2026-04-26 — Core Interaction Features
 
 ### Added
 - Drag-and-drop system for moving tasks across columns
@@ -82,7 +103,7 @@
 
 ---
 
-## 2026-04-25 Ã¢â‚¬â€ Progress & Input Enhancements
+## 2026-04-25 — Progress & Input Enhancements
 
 ### Added
 - Multi-view progress tracking:
@@ -101,7 +122,7 @@
 
 ---
 
-## 2026-04-24 Ã¢â‚¬â€ Initial Dashboard Implementation
+## 2026-04-24 — Initial Dashboard Implementation
 
 ### Added
 - Core task management system
@@ -116,7 +137,7 @@
 
 ---
 
-## 2026-04-20 Ã¢â‚¬â€ Initial Development Phase
+## 2026-04-20 — Initial Development Phase
 
 ### Added
 - Initial concept and design of the productivity dashboard

@@ -29,6 +29,7 @@ var _lastTaskAvailableHeight = null;
 var _columnScopedToggleTab = null;
 var _noteToggleRenderTab = null;
 var _pendingFlipReleases = null;
+var _pendingDeleteScrollStabilization = null;
 var openChildNoteAdds = {};
 var deleteIntentTasks = {};
 var deleteIntentParentNotes = {};
@@ -931,6 +932,16 @@ function deleteTask(tab, id, btn) {
     if (main) main.classList.remove('task-reflowing');
   }
   function removeFromData() {
+    if (list) {
+      _pendingDeleteScrollStabilization = {
+        tab: tab,
+        scrollTop: list.scrollTop,
+        scrollHeight: list.scrollHeight,
+        clientHeight: list.clientHeight,
+        appliedScrollTop: null,
+        resolved: false
+      };
+    }
     var data = getData();
     data[tab] = (data[tab]||[]).filter(function(t){ return t.id!==id; });
     delete openNotes[id];
@@ -2243,9 +2254,15 @@ function render() {
     scopedTabsForPostRender = _undoRedoScopedTabs.slice();
   }
   var scrollTops = {};
+  var deleteScrollStabilization = _pendingDeleteScrollStabilization;
   renderTabs.forEach(function(tab) {
     var containerBefore = document.getElementById('tasks-' + tab);
-    if (containerBefore) scrollTops[tab] = containerBefore.scrollTop;
+    if (!containerBefore) return;
+    if (deleteScrollStabilization && deleteScrollStabilization.tab === tab) {
+      scrollTops[tab] = deleteScrollStabilization.scrollTop;
+      return;
+    }
+    scrollTops[tab] = containerBefore.scrollTop;
   });
   if (!_freezeTaskAvailableHeightSync && !_noteToggleRenderTab && !_undoRedoScopedTabs) syncTaskCardAvailableHeight();
   var data = getData();
@@ -2262,10 +2279,17 @@ function render() {
   renderTabs.forEach(function(tab) {
     var containerAfter = document.getElementById('tasks-' + tab);
     if (!containerAfter || scrollTops[tab] === undefined) return;
-    if (containerAfter.scrollTop !== scrollTops[tab]) {
-      containerAfter.scrollTop = scrollTops[tab];
+    var targetScrollTop = scrollTops[tab];
+    if (deleteScrollStabilization && deleteScrollStabilization.tab === tab && deleteScrollStabilization.resolved) {
+      targetScrollTop = deleteScrollStabilization.appliedScrollTop;
+    }
+    if (containerAfter.scrollTop !== targetScrollTop) {
+      containerAfter.scrollTop = targetScrollTop;
     }
   });
+  if (deleteScrollStabilization && deleteScrollStabilization.resolved) {
+    _pendingDeleteScrollStabilization = null;
+  }
   if (!scopedTabsForPostRender || !scopedTabsForPostRender.length) {
     var motionTabs = ['life','work','pd'].filter(function(tab) {
       var container = document.getElementById('tasks-' + tab);
@@ -2357,6 +2381,10 @@ function renderColumn(data, tab) {
 
   var container = document.getElementById('tasks-'+tab);
   if (!container) return;
+  var deleteScrollStabilization = _pendingDeleteScrollStabilization && _pendingDeleteScrollStabilization.tab === tab
+    ? _pendingDeleteScrollStabilization
+    : null;
+  var scrollCompensationDelta = 0;
   bindTaskColumnDropZone(container);
   var suppressFilterMotion = !!(_filterNoMotionCols && _filterNoMotionCols[tab]);
   var addInput = document.getElementById('input-'+tab);
@@ -2370,6 +2398,13 @@ function renderColumn(data, tab) {
                  : activeFilter === 'repeat' ? 'No repeating tasks.'
                  : 'No tasks yet.';
     container.innerHTML = '<p class="empty-state">' + emptyMsg + '</p>';
+    if (deleteScrollStabilization) {
+      var emptyMaxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      var emptyAppliedTop = clamp(deleteScrollStabilization.scrollTop, 0, emptyMaxScrollTop);
+      container.scrollTop = emptyAppliedTop;
+      deleteScrollStabilization.appliedScrollTop = container.scrollTop;
+      deleteScrollStabilization.resolved = true;
+    }
     return;
   }
 
@@ -2377,11 +2412,11 @@ function renderColumn(data, tab) {
   var prevNoteRects = {};
   var noteToggleForTab = pendingNoteToggle && pendingNoteToggle.tab === tab ? pendingNoteToggle : null;
   container.querySelectorAll('.task-group[data-id]').forEach(function(el) {
-    prevRects[el.dataset.id] = el.getBoundingClientRect();
+    prevRects[el.dataset.id] = { top: el.getBoundingClientRect().top };
     if (!noteToggleForTab || el.dataset.id !== noteToggleForTab.taskId) return;
     var taskId = el.dataset.id;
     el.querySelectorAll('.note-pill[data-note-id]').forEach(function(noteEl) {
-      prevNoteRects[taskId + ':' + noteEl.dataset.noteId] = noteEl.getBoundingClientRect();
+      prevNoteRects[taskId + ':' + noteEl.dataset.noteId] = { top: noteEl.getBoundingClientRect().top };
     });
   });
 
@@ -2504,6 +2539,24 @@ function renderColumn(data, tab) {
 
   // Settle textarea-driven card heights before measuring the rebuilt layout for FLIP.
   container.querySelectorAll('.title-input, .note-text-input').forEach(autoResizeIfNeeded);
+  if (deleteScrollStabilization) {
+    var maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    var appliedScrollTop = clamp(deleteScrollStabilization.scrollTop, 0, maxScrollTop);
+    container.scrollTop = appliedScrollTop;
+    deleteScrollStabilization.appliedScrollTop = container.scrollTop;
+    deleteScrollStabilization.resolved = true;
+    scrollCompensationDelta = deleteScrollStabilization.scrollTop - deleteScrollStabilization.appliedScrollTop;
+    if (Math.abs(scrollCompensationDelta) > 0.5) {
+      Object.keys(prevRects).forEach(function(taskId) {
+        if (!prevRects[taskId]) return;
+        prevRects[taskId].top += scrollCompensationDelta;
+      });
+      Object.keys(prevNoteRects).forEach(function(noteKey) {
+        if (!prevNoteRects[noteKey]) return;
+        prevNoteRects[noteKey].top += scrollCompensationDelta;
+      });
+    }
+  }
 
   if (suppressFilterMotion) {
     container._lastFlipMs = 0;
@@ -3006,6 +3059,7 @@ function triggerTaskDashboardEntrance() {
         syncTaskCardAvailableHeight({ preserveVisibleHeight: true });
         _taskDashboardEntranceInProgress = false;
         _isTaskDashboardBooting = false;
+        syncTaskCardAvailableHeight();
       }, 1020);
     }, 0);
   }
